@@ -1,0 +1,39 @@
+const router = require("express").Router()
+const pool = require("../db")
+const bcrypt = require("bcryptjs")
+const jwt = require("jsonwebtoken")
+
+router.post("/register", async (req, res) => {
+  const { name, email, phone, password, role } = req.body
+  try {
+    const hash = await bcrypt.hash(password, 10)
+    const result = await pool.query(
+      "INSERT INTO users (name, email, phone, password_hash, role) VALUES ($1,$2,$3,$4,$5) RETURNING id, name, email, role",
+      [name, email, phone, hash, role]
+    )
+    res.json(result.rows[0])
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
+router.post("/login", async (req, res) => {
+  const { email, password } = req.body
+  try {
+    const result = await pool.query("SELECT * FROM users WHERE email = $1", [email])
+    const user = result.rows[0]
+    if (!user) return res.status(400).json({ error: "User not found" })
+    const valid = await bcrypt.compare(password, user.password_hash)
+    if (!valid) return res.status(400).json({ error: "Wrong password" })
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    )
+    res.json({ token, user: { id: user.id, name: user.name, role: user.role } })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+module.exports = router
