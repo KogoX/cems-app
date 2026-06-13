@@ -1,19 +1,31 @@
 const router = require("express").Router();
+const pool = require("../db");
 
-let orders = [
-  { id: "ORD-2024-892", buyer: "Global Green Exporters", quantity: "1,200 kg", status: "Shipped", date: "2024-06-12" },
-  { id: "ORD-2024-885", buyer: "EuroHarvest GmbH", quantity: "850 kg", status: "Processing", date: "2024-06-10" },
-  { id: "ORD-2024-870", buyer: "AvoDirect UK Ltd.", quantity: "2,400 kg", status: "Delivered", date: "2024-06-05" }
-];
-
-router.get("/", (req, res) => {
-  res.json(orders);
+router.get("/", async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT o.id, u.name as buyer, o.quantity, o.status, o.created_at as date 
+      FROM orders o 
+      LEFT JOIN users u ON o.buyer_id = u.id 
+      ORDER BY o.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.post("/", (req, res) => {
-  const newOrder = { id: `ORD-${Date.now()}`, ...req.body };
-  orders.unshift(newOrder);
-  res.json(newOrder);
+router.post("/", async (req, res) => {
+  const { buyer_id, produce, quantity } = req.body;
+  try {
+    const result = await pool.query(
+      "INSERT INTO orders (buyer_id, produce, quantity) VALUES ($1, $2, $3) RETURNING *",
+      [buyer_id, produce || 'Avocado (Hass)', quantity]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

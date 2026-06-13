@@ -1,19 +1,29 @@
 const router = require("express").Router();
+const pool = require("../db");
 
-let farmers = [
-  { id: "F-102", name: "Peter Kamau", location: "Kiambu", status: "Active", yield: "14.2k kg" },
-  { id: "F-105", name: "Mary Wanjiku", location: "Muranga", status: "Pending", yield: "8.5k kg" },
-  { id: "F-108", name: "John Omondi", location: "Kisii", status: "Active", yield: "22.1k kg" }
-];
-
-router.get("/", (req, res) => {
-  res.json(farmers);
+router.get("/", async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT id, name, location, status, created_at as added FROM users WHERE role = 'farmer' ORDER BY created_at DESC"
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.post("/", (req, res) => {
-  const newFarmer = { id: `F-${Date.now().toString().slice(-3)}`, ...req.body };
-  farmers.unshift(newFarmer);
-  res.json(newFarmer);
+router.post("/", async (req, res) => {
+  // Usually handled by auth/register, but kept for legacy
+  const { name, location } = req.body;
+  try {
+    const result = await pool.query(
+      "INSERT INTO users (name, location, role) VALUES ($1, $2, 'farmer') RETURNING *",
+      [name, location]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
