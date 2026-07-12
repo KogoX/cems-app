@@ -1,29 +1,26 @@
-const router = require("express").Router();
-const pool = require("../db");
+const router = require("express").Router()
+const pool = require("../db")
 
-router.get("/", async (req, res) => {
+router.get("/", async (_req, res) => {
   try {
-    const result = await pool.query(
-      "SELECT id, name, location, status, created_at as added FROM users WHERE role = 'farmer' ORDER BY created_at DESC"
-    );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    const result = await pool.query(`
+      SELECT
+        u.id,
+        u.name,
+        u.location,
+        u.status,
+        u.created_at,
+        COALESCE(SUM(y.quantity), 0) AS total_yield_kg
+      FROM users u
+      LEFT JOIN yields y ON y.farmer_id = u.id
+      WHERE u.role = 'farmer'
+      GROUP BY u.id
+      ORDER BY u.created_at DESC
+    `)
+    res.json(result.rows)
+  } catch (error) {
+    res.status(500).json({ error: error.message })
   }
-});
+})
 
-router.post("/", async (req, res) => {
-  // Usually handled by auth/register, but kept for legacy
-  const { name, location } = req.body;
-  try {
-    const result = await pool.query(
-      "INSERT INTO users (name, location, role) VALUES ($1, $2, 'farmer') RETURNING *",
-      [name, location]
-    );
-    res.json(result.rows[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-module.exports = router;
+module.exports = router
