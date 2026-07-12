@@ -1,17 +1,28 @@
 const { Pool } = require("pg");
 require("dotenv").config();
 
-// Fix the URL parsing issue if there's an unencoded '@' in the password
-let dbUrl = process.env.DATABASE_URL || "";
-// If the url contains two @ symbols, it means the password has one and it wasn't encoded.
-if ((dbUrl.match(/@/g) || []).length > 1) {
-  // Replace the first '@' with '%40' assuming the format is postgres://user:pass@host...
-  dbUrl = dbUrl.replace('@', '%40');
-}
+// Standard breakdown of your string parameters:
+// postgresql://postgres.yzjshccolwluzsvtwaap:Kipchumba%401@aws-1-eu-central-1.pooler.supabase.com:5432/postgres
 
 const pool = new Pool({
-  connectionString: dbUrl,
-  ssl: { rejectUnauthorized: false } // Needed for Supabase
+  user: "postgres.yzjshccolwluzsvtwaap",
+  password: "Kipchumba@1", // Use the raw un-encoded password here since it isn't part of a URI!
+  host: "aws-1-eu-central-1.pooler.supabase.com",
+  port: 5432,
+  database: "postgres",
+  // Bypasses the self-signed certificate restriction successfully
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+
+// Run a clear connection check log
+pool.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('❌ Supabase Connection Failed:', err.message);
+  } else {
+    console.log('✅ db.js connected over IPv4!');
+  }
 });
 
 module.exports = pool;
