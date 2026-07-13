@@ -2,6 +2,14 @@ const router = require("express").Router()
 const pool = require("../db")
 const auth = require("../middleware/auth")
 
+const managerOnly = (req, res) => {
+  if (req.user.role !== "manager") {
+    res.status(403).json({ error: "Managers only" })
+    return false
+  }
+  return true
+}
+
 router.get("/", auth, async (req, res) => {
   try {
     const values = []
@@ -23,10 +31,16 @@ router.get("/", auth, async (req, res) => {
         y.quantity,
         y.grade,
         y.status,
-        y.created_at
+        y.created_at,
+        COALESCE(
+          json_agg(yp.image_data ORDER BY yp.created_at) FILTER (WHERE yp.id IS NOT NULL),
+          '[]'
+        ) AS photos
       FROM yields y
       LEFT JOIN users u ON y.farmer_id = u.id
+      LEFT JOIN yield_photos yp ON yp.yield_id = y.id
       ${where}
+      GROUP BY y.id, u.name
       ORDER BY y.created_at DESC
       `,
       values
@@ -39,7 +53,7 @@ router.get("/", auth, async (req, res) => {
 })
 
 router.post("/", auth, async (req, res) => {
-  const { cropSeason, variety, quantity, grade, date, farmer_id } = req.body
+  const { cropSeason, variety, quantity, grade, date, farmer_id, photos } = req.body
 
   if (!cropSeason || !quantity || !grade) {
     return res.status(400).json({ error: "cropSeason, quantity and grade are required" })
@@ -64,7 +78,46 @@ router.post("/", auth, async (req, res) => {
         date ? new Date(date) : new Date()
       ]
     )
-    res.status(201).json(result.rows[0])
+    const yieldRecord = result.rows[0]
+    const safePhotos = Array.isArray(photos) ? photos.slice(0, 5).filter(Boolean) : []
+
+    for (const imageData of safePhotos) {
+      await pool.query(
+        "INSERT INTO yield_photos (yield_id, image_data) VALUES ($1, $2)",
+        [yieldRecord.id, imageData]
+      )
+    }
+
+    res.status(201).json({ ...yieldRecord, photos: safePhotos })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+router.patch("/:id/status", auth, async (req, res) => {
+  if (!managerOnly(req, res)) return
+
+  const allowedStatuses = new Set(["Logged", "Approved", "Scheduled", "Exported", "Rejected"])
+  const { status } = req.body
+
+  if (!allowedStatuses.has(status)) {
+    return res.status(400).json({ error: "Invalid yield status" })
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE yields
+       SET status = $1
+       WHERE id = $2
+       RETURNING *`,
+      [status, req.params.id]
+    )
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Yield not found" })
+    }
+
+    res.json(result.rows[0])
   } catch (error) {
     res.status(500).json({ error: error.message })
   }

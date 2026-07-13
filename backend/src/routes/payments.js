@@ -2,6 +2,14 @@ const router = require("express").Router()
 const pool = require("../db")
 const auth = require("../middleware/auth")
 
+const managerOnly = (req, res) => {
+  if (req.user.role !== "manager") {
+    res.status(403).json({ error: "Managers only" })
+    return false
+  }
+  return true
+}
+
 router.get("/", auth, async (req, res) => {
   try {
     const values = []
@@ -10,6 +18,9 @@ router.get("/", auth, async (req, res) => {
     if (req.user.role === "buyer") {
       values.push(req.user.id)
       where = "WHERE p.buyer_id = $1"
+    } else if (req.user.role === "farmer") {
+      values.push(req.user.id)
+      where = "WHERE o.farmer_id = $1"
     }
 
     const result = await pool.query(
@@ -18,7 +29,9 @@ router.get("/", auth, async (req, res) => {
         p.id,
         p.order_id,
         p.buyer_id,
-        u.name AS buyer,
+        o.farmer_id,
+        buyer.name AS buyer,
+        farmer.name AS farmer,
         o.quantity,
         o.total_amount,
         p.amount,
@@ -26,7 +39,8 @@ router.get("/", auth, async (req, res) => {
         p.created_at
       FROM payments p
       LEFT JOIN orders o ON p.order_id = o.id
-      LEFT JOIN users u ON p.buyer_id = u.id
+      LEFT JOIN users buyer ON p.buyer_id = buyer.id
+      LEFT JOIN users farmer ON o.farmer_id = farmer.id
       ${where}
       ORDER BY p.created_at DESC
       `,
@@ -62,6 +76,39 @@ router.post("/", auth, async (req, res) => {
     await pool.query("UPDATE orders SET status = 'Paid' WHERE id = $1", [order_id])
 
     res.status(201).json(paymentResult.rows[0])
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+router.patch("/:id/status", auth, async (req, res) => {
+  if (!managerOnly(req, res)) return
+
+  const allowedStatuses = new Set(["Pending", "Verified", "Held", "Rejected"])
+  const { status } = req.body
+
+  if (!allowedStatuses.has(status)) {
+    return res.status(400).json({ error: "Invalid payment status" })
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE payments
+       SET status = $1
+       WHERE id = $2
+       RETURNING *`,
+      [status, req.params.id]
+    )
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "Payment not found" })
+    }
+
+    if (status === "Verified") {
+      await pool.query("UPDATE orders SET status = 'Paid' WHERE id = $1", [result.rows[0].order_id])
+    }
+
+    res.json(result.rows[0])
   } catch (error) {
     res.status(500).json({ error: error.message })
   }

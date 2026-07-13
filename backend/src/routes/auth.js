@@ -83,4 +83,61 @@ router.get("/me", auth, async (req, res) => {
   res.json(result.rows[0])
 })
 
+router.get("/users", auth, async (req, res) => {
+  if (req.user.role !== "manager") {
+    return res.status(403).json({ error: "Managers only" })
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT
+        id,
+        name,
+        email,
+        phone,
+        role,
+        location,
+        status,
+        created_at
+      FROM users
+      ORDER BY created_at DESC
+    `)
+
+    res.json(result.rows)
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+router.patch("/users/:id/status", auth, async (req, res) => {
+  if (req.user.role !== "manager") {
+    return res.status(403).json({ error: "Managers only" })
+  }
+
+  const allowedStatuses = new Set(["Active", "Pending", "Suspended"])
+  const { status } = req.body
+
+  if (!allowedStatuses.has(status)) {
+    return res.status(400).json({ error: "Invalid user status" })
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE users
+       SET status = $1
+       WHERE id = $2
+       RETURNING id, name, email, phone, role, location, status, created_at`,
+      [status, req.params.id]
+    )
+
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "User not found" })
+    }
+
+    res.json(result.rows[0])
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 module.exports = router
