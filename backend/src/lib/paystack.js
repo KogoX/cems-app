@@ -101,6 +101,23 @@ async function initiateTransfer({ amountKes, recipientCode, reason, reference })
   return result.data
 }
 
+async function initiateBulkTransfer({ transfers }) {
+  const body = {
+    source: "balance",
+    currency: "KES",
+    transfers: transfers.map(t => ({
+      amount: toKobo(t.amountKes),
+      recipient: t.recipientCode,
+      reference: t.reference
+    }))
+  }
+  const result = await paystackFetch("/transfer/bulk", {
+    method: "POST",
+    body: JSON.stringify(body)
+  })
+  return result.data
+}
+
 function verifyWebhookSignature(rawBody, signature) {
   if (!SECRET || !signature) return false
   const hash = crypto.createHmac("sha512", SECRET).update(rawBody).digest("hex")
@@ -113,6 +130,7 @@ module.exports = {
   verifyTransaction,
   createTransferRecipient,
   initiateTransfer,
+  initiateBulkTransfer,
   verifyWebhookSignature,
   generateReference,
   toKobo

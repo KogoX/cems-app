@@ -18,6 +18,39 @@ async function bootstrapDatabase(pool) {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS location TEXT")
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending'")
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS unique_id TEXT")
+
+  // Backfill existing users who don't have a unique_id
+  const unassigned = await pool.query("SELECT id FROM users WHERE unique_id IS NULL")
+  for (const row of unassigned.rows) {
+    let code = ""
+    while (true) {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+      let generated = ""
+      for (let i = 0; i < 5; i++) {
+        generated += chars.charAt(Math.floor(Math.random() * chars.length))
+      }
+      const duplicate = await pool.query("SELECT id FROM users WHERE unique_id = $1", [generated])
+      if (duplicate.rows.length === 0) {
+        code = generated
+        break
+      }
+    }
+    await pool.query("UPDATE users SET unique_id = $1 WHERE id = $2", [code, row.id])
+  }
+
+  // Ensure unique constraint on unique_id
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'users_unique_id_key'
+      ) THEN
+        ALTER TABLE users ADD CONSTRAINT users_unique_id_key UNIQUE (unique_id);
+      END IF;
+    END;
+    $$;
+  `)
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS yields (

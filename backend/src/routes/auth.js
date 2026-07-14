@@ -7,6 +7,20 @@ const auth = require("../middleware/auth")
 
 const allowedRoles = new Set(["farmer", "manager", "buyer"])
 
+async function getUniqueId(pool) {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  while (true) {
+    let generated = ""
+    for (let i = 0; i < 5; i++) {
+      generated += chars.charAt(Math.floor(Math.random() * chars.length))
+    }
+    const check = await pool.query("SELECT id FROM users WHERE unique_id = $1", [generated])
+    if (check.rows.length === 0) {
+      return generated
+    }
+  }
+}
+
 router.post("/register", async (req, res) => {
   const { name, email, phone, password, role, location } = req.body
 
@@ -19,11 +33,12 @@ router.post("/register", async (req, res) => {
 
   try {
     const hash = await bcrypt.hash(password, 10)
+    const uniqueId = await getUniqueId(pool)
     const result = await pool.query(
-      `INSERT INTO users (name, email, phone, password_hash, role, location)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       RETURNING id, name, email, phone, role, location`,
-      [name, email.toLowerCase().trim(), phone || null, hash, role, location || null]
+      `INSERT INTO users (name, email, phone, password_hash, role, location, unique_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       RETURNING id, name, email, phone, role, location, unique_id`,
+      [name, email.toLowerCase().trim(), phone || null, hash, role, location || null, uniqueId]
     )
 
     const user = result.rows[0]
@@ -47,12 +62,12 @@ router.post("/login", async (req, res) => {
     const result = await pool.query("SELECT * FROM users WHERE email = $1", [email.toLowerCase().trim()])
     const user = result.rows[0]
     if (!user) {
-      return res.status(404).json({ error: "User not found" })
+      return res.status(401).json({ error: "Invalid login details" })
     }
 
     const valid = await bcrypt.compare(password, user.password_hash)
     if (!valid) {
-      return res.status(401).json({ error: "Wrong password" })
+      return res.status(401).json({ error: "Invalid login details" })
     }
 
     const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" })
@@ -64,7 +79,8 @@ router.post("/login", async (req, res) => {
         email: user.email,
         role: user.role,
         phone: user.phone,
-        location: user.location
+        location: user.location,
+        unique_id: user.unique_id
       }
     })
   } catch (error) {
@@ -74,7 +90,7 @@ router.post("/login", async (req, res) => {
 
 router.get("/me", auth, async (req, res) => {
   const result = await pool.query(
-    "SELECT id, name, email, phone, role, location, status, created_at FROM users WHERE id = $1",
+    "SELECT id, name, email, phone, role, location, status, created_at, unique_id FROM users WHERE id = $1",
     [req.user.id]
   )
   if (!result.rows[0]) {
@@ -98,7 +114,8 @@ router.get("/users", auth, async (req, res) => {
         role,
         location,
         status,
-        created_at
+        created_at,
+        unique_id
       FROM users
       ORDER BY created_at DESC
     `)
@@ -126,7 +143,7 @@ router.patch("/users/:id/status", auth, async (req, res) => {
       `UPDATE users
        SET status = $1
        WHERE id = $2
-       RETURNING id, name, email, phone, role, location, status, created_at`,
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id`,
       [status, req.params.id]
     )
 
