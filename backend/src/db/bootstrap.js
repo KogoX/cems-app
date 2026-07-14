@@ -73,6 +73,29 @@ async function bootstrapDatabase(pool) {
     )
   `)
   await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending'")
+  await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS paystack_reference TEXT")
+  await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS method TEXT")
+  await pool.query("ALTER TABLE payments ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'KES'")
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payouts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      farmer_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
+      amount NUMERIC(14, 2) NOT NULL,
+      method TEXT NOT NULL CHECK (method IN ('mpesa', 'bank', 'cash')),
+      status TEXT NOT NULL DEFAULT 'Pending',
+      reference TEXT,
+      paystack_transfer_code TEXT,
+      notes TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      processed_at TIMESTAMPTZ
+    )
+  `)
+  await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reference TEXT")
+  await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS paystack_transfer_code TEXT")
+  await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS notes TEXT")
+  await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ")
 }
 
 async function ensureOrderYieldIdUuid(pool) {

@@ -1,6 +1,12 @@
 const router = require("express").Router()
 const pool = require("../db")
 const auth = require("../middleware/auth")
+const paystack = require("../lib/paystack")
+
+function normalizePhone(phone) {
+  if (!phone) return ""
+  return phone.replace(/[^0-9]/g, "")
+}
 
 const managerOnly = (req, res) => {
   if (req.user.role !== "manager") {
@@ -9,6 +15,122 @@ const managerOnly = (req, res) => {
   }
   return true
 }
+
+router.post("/initialize", auth, async (req, res) => {
+  if (req.user.role !== "buyer") {
+    return res.status(403).json({ error: "Only buyers can initiate payments" })
+  }
+
+  const { order_id, method, phone } = req.body
+  if (!order_id) {
+    return res.status(400).json({ error: "order_id is required" })
+  }
+  if (!["card", "mpesa"].includes(method)) {
+    return res.status(400).json({ error: "method must be 'card' or 'mpesa'" })
+  }
+
+  try {
+    const orderResult = await pool.query("SELECT * FROM orders WHERE id = $1", [order_id])
+    const order = orderResult.rows[0]
+    if (!order) {
+      return res.status(404).json({ error: "Order not found" })
+    }
+    if (order.buyer_id !== req.user.id) {
+      return res.status(403).json({ error: "This order does not belong to you" })
+    }
+
+    const userResult = await pool.query("SELECT email, phone FROM users WHERE id = $1", [req.user.id])
+    const buyer = userResult.rows[0]
+    if (!buyer?.email) {
+      return res.status(400).json({ error: "Your account has no email for payment" })
+    }
+
+    const reference = paystack.generateReference("PAY")
+    const channels = method === "mpesa" ? ["mobile_money"] : ["card"]
+    const callbackUrl = process.env.PAYSTACK_CALLBACK_URL
+
+    const mobileMoney =
+      method === "mpesa"
+        ? { phone: normalizePhone(phone || buyer.phone), provider: "mpesa" }
+        : undefined
+
+    const paymentResult = await pool.query(
+      `INSERT INTO payments (order_id, buyer_id, amount, status, method, paystack_reference, currency)
+       VALUES ($1, $2, $3, 'Pending', $4, $5, 'KES')
+       RETURNING *`,
+      [order_id, req.user.id, Number(order.total_amount), method, reference]
+    )
+
+    const data = await paystack.initializeTransaction({
+      email: buyer.email,
+      amountKes: Number(order.total_amount),
+      reference,
+      channels,
+      callbackUrl,
+      metadata: { order_id: String(order_id), buyer_id: req.user.id },
+      mobileMoney
+    })
+
+    if (method === "mpesa" && !data.authorization_url) {
+      res.status(201).json({
+        reference,
+        method,
+        authorization_url: null,
+        message: "Check your phone to approve the M-Pesa prompt."
+      })
+      return
+    }
+
+    res.status(201).json({
+      reference,
+      method,
+      authorization_url: data.authorization_url,
+      access_code: data.access_code
+    })
+  } catch (error) {
+    res.status(502).json({ error: error.message })
+  }
+})
+
+router.post("/verify", auth, async (req, res) => {
+  const { reference } = req.body
+  if (!reference) {
+    return res.status(400).json({ error: "reference is required" })
+  }
+
+  try {
+    const localResult = await pool.query("SELECT * FROM payments WHERE paystack_reference = $1", [reference])
+    const local = localResult.rows[0]
+    if (!local) {
+      return res.status(404).json({ error: "Payment not found" })
+    }
+    if (req.user.role === "buyer" && local.buyer_id !== req.user.id) {
+      return res.status(403).json({ error: "Forbidden" })
+    }
+
+    let status = local.status
+    let verified = false
+    try {
+      const data = await paystack.verifyTransaction(reference)
+      verified = data.status === "success"
+    } catch (_error) {
+      verified = local.status === "Verified"
+    }
+
+    if (verified && status !== "Verified") {
+      const updated = await pool.query(
+        "UPDATE payments SET status = 'Verified' WHERE id = $1 RETURNING *",
+        [local.id]
+      )
+      await pool.query("UPDATE orders SET status = 'Paid' WHERE id = $1", [local.order_id])
+      status = updated.rows[0].status
+    }
+
+    res.json({ reference, status, verified })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
 
 router.get("/", auth, async (req, res) => {
   try {
