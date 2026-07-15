@@ -73,4 +73,12 @@ start().catch((error) => {
   process.exit(1)
 })
 
+// Graceful shutdown – releases DB connections so nodemon restarts don't exhaust the pool
+async function shutdown() {
+  await pool.end()
+  process.exit(0)
+}
+process.on("SIGINT", shutdown)
+process.on("SIGTERM", shutdown)
+
 module.exports = app

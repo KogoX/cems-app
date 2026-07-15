@@ -99,6 +99,26 @@ router.get("/me", auth, async (req, res) => {
   res.json(result.rows[0])
 })
 
+router.patch("/me", auth, async (req, res) => {
+  const { name, phone, location } = req.body
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: "Name is required" })
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE users
+       SET name = $1, phone = $2, location = $3
+       WHERE id = $4
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id`,
+      [name.trim(), phone?.trim() || null, location?.trim() || null, req.user.id]
+    )
+    res.json(result.rows[0])
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+
 router.get("/users", auth, async (req, res) => {
   if (req.user.role !== "manager") {
     return res.status(403).json({ error: "Managers only" })

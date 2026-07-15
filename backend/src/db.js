@@ -10,7 +10,10 @@ const connectionString = process.env.DATABASE_URL.replace(/([?&])sslmode=[^&]*/i
 
 const pool = new Pool({
   connectionString,
-  ssl: useSsl ? { rejectUnauthorized: false } : false
+  ssl: useSsl ? { rejectUnauthorized: false } : false,
+  max: 5,                    // transaction-mode pooler supports many connections
+  idleTimeoutMillis: 10000,  // release idle connections after 10 s
+  connectionTimeoutMillis: 5000, // fail fast if no connection available within 5 s
 })
 
 module.exports = pool
