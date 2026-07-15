@@ -19,6 +19,9 @@ async function bootstrapDatabase(pool) {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Pending'")
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS unique_id TEXT")
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS national_id TEXT")
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT FALSE")
+
 
   // Backfill existing users who don't have a unique_id
   const unassigned = await pool.query("SELECT id FROM users WHERE unique_id IS NULL")

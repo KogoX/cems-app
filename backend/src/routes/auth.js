@@ -90,7 +90,7 @@ router.post("/login", async (req, res) => {
 
 router.get("/me", auth, async (req, res) => {
   const result = await pool.query(
-    "SELECT id, name, email, phone, role, location, status, created_at, unique_id FROM users WHERE id = $1",
+    "SELECT id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified FROM users WHERE id = $1",
     [req.user.id]
   )
   if (!result.rows[0]) {
@@ -109,7 +109,7 @@ router.patch("/me", auth, async (req, res) => {
       `UPDATE users
        SET name = $1, phone = $2, location = $3
        WHERE id = $4
-       RETURNING id, name, email, phone, role, location, status, created_at, unique_id`,
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified`,
       [name.trim(), phone?.trim() || null, location?.trim() || null, req.user.id]
     )
     res.json(result.rows[0])
@@ -118,6 +118,41 @@ router.patch("/me", auth, async (req, res) => {
   }
 })
 
+router.patch("/me/verify", auth, async (req, res) => {
+  if (req.user.role !== "manager") {
+    return res.status(403).json({ error: "Only managers can verify their identity here" })
+  }
+  const { national_id } = req.body
+  if (!national_id || !national_id.trim()) {
+    return res.status(400).json({ error: "National ID is required" })
+  }
+  try {
+    const result = await pool.query(
+      `UPDATE users
+       SET national_id = $1, verified = TRUE
+       WHERE id = $2
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified`,
+      [national_id.trim().toUpperCase(), req.user.id]
+    )
+    res.json(result.rows[0])
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+router.get("/managers/verified", auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, name, email, phone, unique_id, verified
+       FROM users
+       WHERE role = 'manager' AND verified = TRUE
+       ORDER BY name ASC`
+    )
+    res.json(result.rows)
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
 
 router.get("/users", auth, async (req, res) => {
   if (req.user.role !== "manager") {
@@ -127,15 +162,7 @@ router.get("/users", auth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        id,
-        name,
-        email,
-        phone,
-        role,
-        location,
-        status,
-        created_at,
-        unique_id
+        id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified
       FROM users
       ORDER BY created_at DESC
     `)
@@ -145,6 +172,7 @@ router.get("/users", auth, async (req, res) => {
     res.status(500).json({ error: error.message })
   }
 })
+
 
 router.patch("/users/:id/status", auth, async (req, res) => {
   if (req.user.role !== "manager") {
