@@ -4,6 +4,7 @@ const auth = require("../middleware/auth")
 const paystack = require("../lib/paystack")
 
 const MPESA_BANK_CODE = "000013"
+const AIRTEL_BANK_CODE = "000026"
 
 function normalizePhone(phone) {
   if (!phone) return ""
@@ -19,8 +20,8 @@ router.post("/", auth, async (req, res) => {
   if (!farmer_id || !amount || !method) {
     return res.status(400).json({ error: "farmer_id, amount and method are required" })
   }
-  if (!["mpesa", "bank", "cash"].includes(method)) {
-    return res.status(400).json({ error: "method must be 'mpesa', 'bank' or 'cash'" })
+  if (!["mpesa", "bank", "cash", "airtel"].includes(method)) {
+    return res.status(400).json({ error: "method must be 'mpesa', 'bank', 'cash', or 'airtel'" })
   }
 
   try {
@@ -38,17 +39,17 @@ router.post("/", auth, async (req, res) => {
     if (method === "cash") {
       status = "Paid"
     } else {
-      const isMpesa = method === "mpesa"
-      const recipientAccount = isMpesa ? normalizePhone(phone || farmer.phone) : account_number
-      const recipientBankCode = isMpesa ? MPESA_BANK_CODE : bank_code
+      const isMobileMoney = method === "mpesa" || method === "airtel"
+      const recipientAccount = isMobileMoney ? normalizePhone(phone || farmer.phone) : account_number
+      const recipientBankCode = method === "mpesa" ? MPESA_BANK_CODE : (method === "airtel" ? AIRTEL_BANK_CODE : bank_code)
 
       if (!recipientAccount) {
-        return res.status(400).json({ error: `A ${isMpesa ? "phone number" : "bank account number"} is required for ${method} payouts` })
+        return res.status(400).json({ error: `A ${isMobileMoney ? "phone number" : "bank account number"} is required for ${method} payouts` })
       }
 
       const recipient = await paystack.createTransferRecipient({
         name: farmer.name,
-        type: isMpesa ? "mobile_money" : "nuban",
+        type: isMobileMoney ? "mobile_money" : "nuban",
         accountNumber: recipientAccount,
         bankCode: recipientBankCode,
         currency: "KES",
@@ -164,8 +165,8 @@ router.post("/batch", auth, async (req, res) => {
       if (!farmer_id || !amount || !method) {
         return res.status(400).json({ error: "farmer_id, amount and method are required for all payouts" })
       }
-      if (!["mpesa", "bank", "cash"].includes(method)) {
-        return res.status(400).json({ error: "method must be 'mpesa', 'bank' or 'cash'" })
+      if (!["mpesa", "bank", "cash", "airtel"].includes(method)) {
+        return res.status(400).json({ error: "method must be 'mpesa', 'bank', 'cash', or 'airtel'" })
       }
     }
 
@@ -187,9 +188,9 @@ router.post("/batch", auth, async (req, res) => {
     for (const item of payouts) {
       if (item.method === "cash") continue
 
-      const isMpesa = item.method === "mpesa"
-      const recipientAccount = isMpesa ? normalizePhone(item.phone || item.farmerPhone) : item.account_number
-      const recipientBankCode = isMpesa ? MPESA_BANK_CODE : item.bank_code
+      const isMobileMoney = item.method === "mpesa" || item.method === "airtel"
+      const recipientAccount = isMobileMoney ? normalizePhone(item.phone || item.farmerPhone) : item.account_number
+      const recipientBankCode = item.method === "mpesa" ? MPESA_BANK_CODE : (item.method === "airtel" ? AIRTEL_BANK_CODE : item.bank_code)
 
       if (!recipientAccount) {
         return res.status(400).json({ error: `Phone/account number is required for farmer ${item.farmerName} (${item.method})` })
@@ -198,7 +199,7 @@ router.post("/batch", auth, async (req, res) => {
       recipientCreationPromises.push((async () => {
         const recipient = await paystack.createTransferRecipient({
           name: item.farmerName,
-          type: isMpesa ? "mobile_money" : "nuban",
+          type: isMobileMoney ? "mobile_money" : "nuban",
           accountNumber: recipientAccount,
           bankCode: recipientBankCode,
           currency: "KES",

@@ -25,8 +25,8 @@ router.post("/initialize", auth, async (req, res) => {
   if (!order_id) {
     return res.status(400).json({ error: "order_id is required" })
   }
-  if (!["card", "mpesa"].includes(method)) {
-    return res.status(400).json({ error: "method must be 'card' or 'mpesa'" })
+  if (!["card", "mpesa", "bank"].includes(method)) {
+    return res.status(400).json({ error: "method must be 'card', 'mpesa' or 'bank'" })
   }
 
   try {
@@ -46,7 +46,7 @@ router.post("/initialize", auth, async (req, res) => {
     }
 
     const reference = paystack.generateReference("PAY")
-    const channels = method === "mpesa" ? ["mobile_money"] : ["card"]
+    const channels = method === "mpesa" ? ["mobile_money"] : (method === "bank" ? ["bank"] : ["card"])
     const callbackUrl = process.env.PAYSTACK_CALLBACK_URL
 
     const mobileMoney =

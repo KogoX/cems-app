@@ -63,8 +63,9 @@ app.use((error, _req, res, _next) => {
 async function start() {
   await bootstrapDatabase(pool)
   const port = process.env.PORT || 5000
-  app.listen(port, () => {
-    console.log(`API listening on port ${port}`)
+  const host = process.env.HOST || "0.0.0.0"
+  app.listen(port, host, () => {
+    console.log(`API listening on http://${host}:${port}`)
   })
 }
 
