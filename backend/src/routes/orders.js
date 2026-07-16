@@ -37,6 +37,8 @@ router.get("/", auth, async (req, res) => {
         o.unit_price,
         o.total_amount,
         o.status,
+        o.tracking_location,
+        o.estimated_delivery,
         o.created_at,
         p.status AS payment_status
       FROM orders o
@@ -100,8 +102,8 @@ router.post("/", auth, async (req, res) => {
 router.patch("/:id/status", auth, async (req, res) => {
   if (!managerOnly(req, res)) return
 
-  const allowedStatuses = new Set(["Processing", "Approved", "Scheduled", "Paid", "Fulfilled", "Cancelled"])
-  const { status } = req.body
+  const allowedStatuses = new Set(["Processing", "Approved", "Scheduled", "Paid", "In Transit", "Ready for Pickup", "Fulfilled", "Cancelled"])
+  const { status, trackingLocation, estimatedDelivery } = req.body
 
   if (!allowedStatuses.has(status)) {
     return res.status(400).json({ error: "Invalid order status" })
@@ -155,19 +157,50 @@ router.patch("/:id/status", auth, async (req, res) => {
       return res.json(result.rows[0])
     }
 
-    const result = await pool.query(
-      `UPDATE orders
-       SET status = $1
-       WHERE id = $2
-       RETURNING *`,
-      [status, req.params.id]
-    )
+    let updateQuery = `
+      UPDATE orders
+      SET status = $1
+    `
+    const updateParams = [status, req.params.id]
+    let paramIndex = 3
+
+    if (trackingLocation !== undefined) {
+      updateQuery += `, tracking_location = $${paramIndex}`
+      updateParams.push(trackingLocation)
+      paramIndex++
+    }
+    if (estimatedDelivery !== undefined) {
+      updateQuery += `, estimated_delivery = $${paramIndex}`
+      updateParams.push(estimatedDelivery ? new Date(estimatedDelivery) : null)
+      paramIndex++
+    }
+
+    updateQuery += ` WHERE id = $2 RETURNING *`
+
+    const result = await pool.query(updateQuery, updateParams)
 
     if (!result.rows[0]) {
       return res.status(404).json({ error: "Order not found" })
     }
 
-    res.json(result.rows[0])
+    const updatedOrder = result.rows[0]
+
+    // If tracking was updated, notify the buyer
+    if (status === "In Transit" || status === "Ready for Pickup") {
+      let msg = status === "In Transit" 
+        ? "Your order is now in transit." 
+        : "Your order is ready for pickup."
+      if (trackingLocation) {
+        msg += ` Current location: ${trackingLocation}.`
+      }
+      
+      await pool.query(
+        "INSERT INTO notifications (user_id, title, message) VALUES ($1, $2, $3)",
+        [updatedOrder.buyer_id, "Shipment Update", msg]
+      )
+    }
+
+    res.json(updatedOrder)
   } catch (error) {
     res.status(500).json({ error: error.message })
   }

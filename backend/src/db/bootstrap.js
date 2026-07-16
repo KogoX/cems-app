@@ -95,6 +95,8 @@ async function bootstrapDatabase(pool) {
   await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0")
   await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Processing'")
   await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS farmer_id UUID")
+  await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_location TEXT")
+  await pool.query("ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_delivery TIMESTAMPTZ")
   await ensureOrderYieldIdUuid(pool)
   await pool.query("UPDATE orders SET total_amount = quantity * unit_price WHERE total_amount = 0")
 
@@ -143,6 +145,19 @@ async function bootstrapDatabase(pool) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+
+  // Performance Indexes
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_yields_farmer_id ON yields(farmer_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_yield_photos_yield_id ON yield_photos(yield_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_orders_buyer_id ON orders(buyer_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_orders_farmer_id ON orders(farmer_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_orders_yield_id ON orders(yield_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_payments_buyer_id ON payments(buyer_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_payouts_farmer_id ON payouts(farmer_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_payouts_order_id ON payouts(order_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read)")
 }
 
 async function ensureOrderYieldIdUuid(pool) {
