@@ -132,6 +132,17 @@ async function bootstrapDatabase(pool) {
   await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS paystack_transfer_code TEXT")
   await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS notes TEXT")
   await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS processed_at TIMESTAMPTZ")
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
 }
 
 async function ensureOrderYieldIdUuid(pool) {

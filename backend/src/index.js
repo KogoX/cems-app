@@ -49,6 +49,8 @@ app.post("/api/payments/webhook", express.raw({ type: "application/json" }), asy
 app.use(express.json({ limit: "50mb" }))
 
 app.use("/api/auth", require("./routes/auth"))
+app.use("/api/stats", require("./routes/stats"))
+app.use("/api/notifications", require("./routes/notifications"))
 app.use("/api/farmers", require("./routes/farmers"))
 app.use("/api/yields", require("./routes/yields"))
 app.use("/api/orders", require("./routes/orders"))

@@ -88,6 +88,13 @@ router.post("/", auth, async (req, res) => {
       )
     }
 
+    // Notify all managers
+    await pool.query(`
+      INSERT INTO notifications (user_id, title, message)
+      SELECT id, 'New Harvest Uploaded', 'A farmer has uploaded a new harvest that requires review.'
+      FROM users WHERE role = 'manager'
+    `)
+
     res.status(201).json({ ...yieldRecord, photos: safePhotos })
   } catch (error) {
     res.status(500).json({ error: error.message })
@@ -117,7 +124,24 @@ router.patch("/:id/status", auth, async (req, res) => {
       return res.status(404).json({ error: "Yield not found" })
     }
 
-    res.json(result.rows[0])
+    const updatedYield = result.rows[0]
+
+    if (status === "Approved") {
+      // Notify the farmer
+      await pool.query(
+        "INSERT INTO notifications (user_id, title, message) VALUES ($1, $2, $3)",
+        [updatedYield.farmer_id, "Harvest Approved", "Your harvest has been approved and is now listed on the marketplace."]
+      )
+
+      // Notify all buyers
+      await pool.query(`
+        INSERT INTO notifications (user_id, title, message)
+        SELECT id, 'New Harvest Available', 'A new verified harvest has been added to the marketplace.'
+        FROM users WHERE role = 'buyer'
+      `)
+    }
+
+    res.json(updatedYield)
   } catch (error) {
     res.status(500).json({ error: error.message })
   }

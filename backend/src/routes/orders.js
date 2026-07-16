@@ -82,7 +82,16 @@ router.post("/", auth, async (req, res) => {
        RETURNING *`,
       [buyerId, produce || "Avocado (Hass)", qty, price, total]
     )
-    res.status(201).json(result.rows[0])
+    const newOrder = result.rows[0]
+
+    // Notify all managers
+    await pool.query(`
+      INSERT INTO notifications (user_id, title, message)
+      SELECT id, 'New Buyer Order', 'A buyer has placed a new order of ' || $1 || ' kg.'
+      FROM users WHERE role = 'manager'
+    `, [qty])
+
+    res.status(201).json(newOrder)
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
@@ -136,6 +145,13 @@ router.patch("/:id/status", auth, async (req, res) => {
       )
 
       await pool.query("UPDATE yields SET status = 'Scheduled' WHERE id = $1", [match.id])
+
+      // Notify the farmer that their harvest is matched
+      await pool.query(
+        "INSERT INTO notifications (user_id, title, message) VALUES ($1, $2, $3)",
+        [match.farmer_id, "Harvest Matched", "Your harvest has been matched with a buyer order and scheduled for export."]
+      )
+
       return res.json(result.rows[0])
     }
 

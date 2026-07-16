@@ -124,6 +124,13 @@ router.post("/verify", auth, async (req, res) => {
       )
       await pool.query("UPDATE orders SET status = 'Paid' WHERE id = $1", [local.order_id])
       status = updated.rows[0].status
+
+      // Notify all managers that a payment was received
+      await pool.query(`
+        INSERT INTO notifications (user_id, title, message)
+        SELECT id, 'Payment Received', 'A payment of KES ' || $1 || ' has been verified for an order.'
+        FROM users WHERE role = 'manager'
+      `, [local.amount])
     }
 
     res.json({ reference, status, verified })
