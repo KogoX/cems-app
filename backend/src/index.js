@@ -10,8 +10,12 @@ const app = express()
 app.use(cors())
 
 app.get("/api/health", async (_req, res) => {
-  const result = await pool.query("SELECT NOW() AS server_time")
-  res.json({ ok: true, serverTime: result.rows[0].server_time })
+  try {
+    const result = await pool.query("SELECT NOW() AS server_time")
+    res.json({ ok: true, serverTime: result.rows[0].server_time })
+  } catch (error) {
+    res.status(500).json({ ok: false, error: "Database connection failed" })
+  }
 })
 
 app.post("/api/payments/webhook", express.raw({ type: "application/json" }), async (req, res) => {
@@ -85,3 +89,5 @@ process.on("SIGINT", shutdown)
 process.on("SIGTERM", shutdown)
 
 module.exports = app
+
+// touch

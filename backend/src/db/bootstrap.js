@@ -121,7 +121,7 @@ async function bootstrapDatabase(pool) {
       farmer_id UUID REFERENCES users(id) ON DELETE CASCADE,
       order_id UUID REFERENCES orders(id) ON DELETE SET NULL,
       amount NUMERIC(14, 2) NOT NULL,
-      method TEXT NOT NULL CHECK (method IN ('mpesa', 'bank', 'cash')),
+      method TEXT NOT NULL CHECK (method IN ('mpesa', 'bank', 'cash', 'airtel')),
       status TEXT NOT NULL DEFAULT 'Pending',
       reference TEXT,
       paystack_transfer_code TEXT,
@@ -129,6 +129,19 @@ async function bootstrapDatabase(pool) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       processed_at TIMESTAMPTZ
     )
+  `)
+  // Migrate existing CHECK constraint to include 'airtel'
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'payouts_method_check'
+      ) THEN
+        ALTER TABLE payouts DROP CONSTRAINT payouts_method_check;
+        ALTER TABLE payouts ADD CONSTRAINT payouts_method_check CHECK (method IN ('mpesa', 'bank', 'cash', 'airtel'));
+      END IF;
+    END;
+    $$;
   `)
   await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS reference TEXT")
   await pool.query("ALTER TABLE payouts ADD COLUMN IF NOT EXISTS paystack_transfer_code TEXT")
