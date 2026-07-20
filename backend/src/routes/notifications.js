@@ -1,10 +1,10 @@
 const express = require("express")
 const pool = require("../db")
-const { requireAuth } = require("../middleware/auth")
+const auth = require("../middleware/auth")
 
 const router = express.Router()
 
-router.get("/", requireAuth, async (req, res) => {
+router.get("/", auth, async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT * FROM notifications WHERE user_id = $1 ORDER BY created_at DESC",
@@ -17,7 +17,7 @@ router.get("/", requireAuth, async (req, res) => {
   }
 })
 
-router.put("/read", requireAuth, async (req, res) => {
+router.put("/read", auth, async (req, res) => {
   try {
     await pool.query(
       "UPDATE notifications SET is_read = TRUE WHERE user_id = $1 AND is_read = FALSE",

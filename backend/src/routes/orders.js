@@ -63,7 +63,7 @@ router.get("/", auth, async (req, res) => {
 })
 
 router.post("/", auth, async (req, res) => {
-  const { buyer_id, produce, quantity, unitPrice } = req.body
+  const { buyer_id, produce, quantity, unitPrice, yield_id } = req.body
   if (!quantity) {
     return res.status(400).json({ error: "quantity is required" })
   }
@@ -78,20 +78,33 @@ router.post("/", auth, async (req, res) => {
   const total = qty * price
 
   try {
+    let farmerId = null
+    let orderStatus = "Processing"
+    
+    // If buyer provides yield_id, lock it immediately
+    if (yield_id) {
+      const yieldCheck = await pool.query("SELECT id, farmer_id, status FROM yields WHERE id = $1 FOR UPDATE", [yield_id])
+      if (yieldCheck.rows.length > 0 && yieldCheck.rows[0].status === "Approved") {
+        farmerId = yieldCheck.rows[0].farmer_id
+        orderStatus = "Scheduled"
+        await pool.query("UPDATE yields SET status = 'Scheduled' WHERE id = $1", [yield_id])
+      }
+    }
+
     const result = await pool.query(
-      `INSERT INTO orders (buyer_id, produce, quantity, unit_price, total_amount)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO orders (buyer_id, produce, quantity, unit_price, total_amount, yield_id, farmer_id, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
-      [buyerId, produce || "Avocado (Hass)", qty, price, total]
+      [buyerId, produce || "Avocado (Hass)", qty, price, total, yield_id || null, farmerId, orderStatus]
     )
     const newOrder = result.rows[0]
 
     // Notify all managers
     await pool.query(`
-      INSERT INTO notifications (user_id, title, message)
-      SELECT id, 'New Buyer Order', 'A buyer has placed a new order of ' || $1 || ' kg.'
+      INSERT INTO notifications (user_id, title, message, target_url)
+      SELECT id, 'New Buyer Order', 'A buyer has placed a new order of ' || $1 || ' kg.', $2
       FROM users WHERE role = 'manager'
-    `, [qty])
+    `, [qty, `/manager?order=${newOrder.id}`])
 
     res.status(201).json(newOrder)
   } catch (error) {
@@ -102,7 +115,7 @@ router.post("/", auth, async (req, res) => {
 router.patch("/:id/status", auth, async (req, res) => {
   if (!managerOnly(req, res)) return
 
-  const allowedStatuses = new Set(["Processing", "Approved", "Scheduled", "Paid", "In Transit", "Ready for Pickup", "Fulfilled", "Cancelled"])
+  const allowedStatuses = new Set(["Processing", "Approved", "Scheduled", "Paid", "Picked Up", "In Transit", "Ready for Pickup", "Fulfilled", "Cancelled"])
   const { status, trackingLocation, estimatedDelivery } = req.body
 
   if (!allowedStatuses.has(status)) {
@@ -150,8 +163,8 @@ router.patch("/:id/status", auth, async (req, res) => {
 
       // Notify the farmer that their harvest is matched
       await pool.query(
-        "INSERT INTO notifications (user_id, title, message) VALUES ($1, $2, $3)",
-        [match.farmer_id, "Harvest Matched", "Your harvest has been matched with a buyer order and scheduled for export."]
+        "INSERT INTO notifications (user_id, title, message, target_url) VALUES ($1, $2, $3, $4)",
+        [match.farmer_id, "Harvest Matched", "Your harvest has been matched with a buyer order and scheduled for export.", `/farmer?yield=${match.id}`]
       )
 
       return res.json(result.rows[0])

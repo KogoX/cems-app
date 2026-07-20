@@ -37,6 +37,14 @@ router.get("/", auth, async (req, res) => {
           '[]'::json
         ) AS photos
       `
+    } else {
+      // Manager and Farmer need to see all photos
+      photosSelect = `
+        COALESCE(
+          (SELECT json_agg(image_data) FROM yield_photos WHERE yield_id = y.id),
+          '[]'::json
+        ) AS photos
+      `
     }
 
     const result = await pool.query(
@@ -104,10 +112,10 @@ router.post("/", auth, async (req, res) => {
 
     // Notify all managers
     await pool.query(`
-      INSERT INTO notifications (user_id, title, message)
-      SELECT id, 'New Harvest Uploaded', 'A farmer has uploaded a new harvest that requires review.'
+      INSERT INTO notifications (user_id, title, message, target_url)
+      SELECT id, 'New Harvest Uploaded', 'A farmer has uploaded a new harvest that requires review.', $1
       FROM users WHERE role = 'manager'
-    `)
+    `, [`/manager?yield=${yieldRecord.id}`])
 
     res.status(201).json({ ...yieldRecord, photos: safePhotos })
   } catch (error) {
@@ -143,16 +151,16 @@ router.patch("/:id/status", auth, async (req, res) => {
     if (status === "Approved") {
       // Notify the farmer
       await pool.query(
-        "INSERT INTO notifications (user_id, title, message) VALUES ($1, $2, $3)",
-        [updatedYield.farmer_id, "Harvest Approved", "Your harvest has been approved and is now listed on the marketplace."]
+        "INSERT INTO notifications (user_id, title, message, target_url) VALUES ($1, $2, $3, $4)",
+        [updatedYield.farmer_id, "Harvest Approved", "Your harvest has been approved and is now listed on the marketplace.", `/farmer?yield=${updatedYield.id}`]
       )
 
       // Notify all buyers
       await pool.query(`
-        INSERT INTO notifications (user_id, title, message)
-        SELECT id, 'New Harvest Available', 'A new verified harvest has been added to the marketplace.'
+        INSERT INTO notifications (user_id, title, message, target_url)
+        SELECT id, 'New Harvest Available', 'A new verified harvest has been added to the marketplace.', $1
         FROM users WHERE role = 'buyer'
-      `)
+      `, [`/buyer?yield=${updatedYield.id}`])
     }
 
     res.json(updatedYield)

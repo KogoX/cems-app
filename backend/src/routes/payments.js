@@ -46,8 +46,9 @@ router.post("/initialize", auth, async (req, res) => {
     }
 
     const reference = paystack.generateReference("PAY")
-    const channels = method === "mpesa" ? ["mobile_money"] : (method === "bank" ? ["bank"] : ["card"])
-    const callbackUrl = process.env.PAYSTACK_CALLBACK_URL
+    const channels = method === "mpesa" ? ["mobile_money"] : (method === "bank" ? ["bank_transfer"] : ["card"])
+
+    const callbackUrl = req.body.callback_url || process.env.PAYSTACK_CALLBACK_URL
 
     const mobileMoney =
       method === "mpesa"

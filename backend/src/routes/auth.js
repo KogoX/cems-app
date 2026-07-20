@@ -42,7 +42,7 @@ router.post("/register", async (req, res) => {
     )
 
     const user = result.rows[0]
-    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" })
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "2d" })
     res.status(201).json({ token, user })
   } catch (error) {
     if (error.code === "23505") {
@@ -70,7 +70,7 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid login details" })
     }
 
-    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" })
+    const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "2d" })
     res.json({
       token,
       user: {
@@ -90,7 +90,7 @@ router.post("/login", async (req, res) => {
 
 router.get("/me", auth, async (req, res) => {
   const result = await pool.query(
-    "SELECT id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified FROM users WHERE id = $1",
+    "SELECT id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details FROM users WHERE id = $1",
     [req.user.id]
   )
   if (!result.rows[0]) {
@@ -100,17 +100,17 @@ router.get("/me", auth, async (req, res) => {
 })
 
 router.patch("/me", auth, async (req, res) => {
-  const { name, phone, location } = req.body
+  const { name, phone, location, payment_details } = req.body
   if (!name || !name.trim()) {
     return res.status(400).json({ error: "Name is required" })
   }
   try {
     const result = await pool.query(
       `UPDATE users
-       SET name = $1, phone = $2, location = $3
-       WHERE id = $4
-       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified`,
-      [name.trim(), phone?.trim() || null, location?.trim() || null, req.user.id]
+       SET name = $1, phone = $2, location = $3, payment_details = $4
+       WHERE id = $5
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details`,
+      [name.trim(), phone?.trim() || null, location?.trim() || null, payment_details?.trim() || null, req.user.id]
     )
     res.json(result.rows[0])
   } catch (error) {
@@ -162,7 +162,7 @@ router.get("/users", auth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified
+        id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details
       FROM users
       ORDER BY created_at DESC
     `)
@@ -200,6 +200,20 @@ router.patch("/users/:id/status", auth, async (req, res) => {
     }
 
     res.json(result.rows[0])
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+router.delete("/me", auth, async (req, res) => {
+  try {
+    // Unassign any orders where this user was the farmer so buyers don't lose order data
+    await pool.query("UPDATE orders SET farmer_id = NULL WHERE farmer_id = $1", [req.user.id])
+    
+    // Delete the user record. Cascading handles yields, payouts, payments, notifications.
+    await pool.query("DELETE FROM users WHERE id = $1", [req.user.id])
+    
+    res.json({ message: "Account deleted successfully" })
   } catch (error) {
     res.status(500).json({ error: error.message })
   }

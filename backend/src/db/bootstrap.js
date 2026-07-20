@@ -21,7 +21,7 @@ async function bootstrapDatabase(pool) {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS unique_id TEXT")
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS national_id TEXT")
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT FALSE")
-
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_details TEXT")
 
   // Backfill existing users who don't have a unique_id
   const unassigned = await pool.query("SELECT id FROM users WHERE unique_id IS NULL")
@@ -142,9 +142,11 @@ async function bootstrapDatabase(pool) {
       title TEXT NOT NULL,
       message TEXT NOT NULL,
       is_read BOOLEAN NOT NULL DEFAULT FALSE,
+      target_url TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+  await pool.query("ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_url TEXT")
 
   // Performance Indexes
   await pool.query("CREATE INDEX IF NOT EXISTS idx_yields_farmer_id ON yields(farmer_id)")
