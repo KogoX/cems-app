@@ -40,7 +40,19 @@ router.get("/", auth, async (req, res) => {
         o.tracking_location,
         o.estimated_delivery,
         o.created_at,
-        p.status AS payment_status
+        p.status AS payment_status,
+        COALESCE(
+          (
+            SELECT json_agg(image_data)
+            FROM (
+              SELECT image_data
+              FROM yield_photos
+              WHERE yield_id = o.yield_id
+              ORDER BY created_at ASC
+            ) photos
+          ),
+          '[]'::json
+        ) AS photos
       FROM orders o
       LEFT JOIN users buyer ON o.buyer_id = buyer.id
       LEFT JOIN users farmer ON o.farmer_id = farmer.id

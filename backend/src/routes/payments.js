@@ -21,12 +21,12 @@ router.post("/initialize", auth, async (req, res) => {
     return res.status(403).json({ error: "Only buyers can initiate payments" })
   }
 
-  const { order_id, method, phone } = req.body
+  const { order_id, method = "checkout", phone } = req.body
   if (!order_id) {
     return res.status(400).json({ error: "order_id is required" })
   }
-  if (!["card", "mpesa", "bank"].includes(method)) {
-    return res.status(400).json({ error: "method must be 'card', 'mpesa' or 'bank'" })
+  if (!["checkout", "card", "mpesa", "bank"].includes(method)) {
+    return res.status(400).json({ error: "method must be 'checkout', 'card', 'mpesa' or 'bank'" })
   }
 
   try {
@@ -46,7 +46,14 @@ router.post("/initialize", auth, async (req, res) => {
     }
 
     const reference = paystack.generateReference("PAY")
-    const channels = method === "mpesa" ? ["mobile_money"] : (method === "bank" ? ["bank_transfer"] : ["card"])
+    const channels =
+      method === "checkout"
+        ? undefined
+        : method === "mpesa"
+          ? ["mobile_money"]
+          : method === "bank"
+            ? ["bank_transfer"]
+            : ["card"]
 
     const callbackUrl = req.body.callback_url || process.env.PAYSTACK_CALLBACK_URL
 

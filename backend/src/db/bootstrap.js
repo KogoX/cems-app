@@ -22,6 +22,7 @@ async function bootstrapDatabase(pool) {
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS national_id TEXT")
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS verified BOOLEAN NOT NULL DEFAULT FALSE")
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_details TEXT")
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL")
 
   // Backfill existing users who don't have a unique_id
   const unassigned = await pool.query("SELECT id FROM users WHERE unique_id IS NULL")
@@ -173,6 +174,7 @@ async function bootstrapDatabase(pool) {
   await pool.query("CREATE INDEX IF NOT EXISTS idx_payouts_order_id ON payouts(order_id)")
   await pool.query("CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id)")
   await pool.query("CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_users_manager_id ON users(manager_id)")
 }
 
 async function ensureOrderYieldIdUuid(pool) {

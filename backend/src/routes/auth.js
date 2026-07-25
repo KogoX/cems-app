@@ -52,6 +52,47 @@ router.post("/register", async (req, res) => {
   }
 })
 
+router.post("/farmers", auth, async (req, res) => {
+  if (req.user.role !== "manager") {
+    return res.status(403).json({ error: "Managers only" })
+  }
+
+  const { name, email, phone, password, location, payment_details } = req.body
+  if (!name || !password) {
+    return res.status(400).json({ error: "name and password are required" })
+  }
+
+  try {
+    const hash = await bcrypt.hash(password, 10)
+    const uniqueId = await getUniqueId(pool)
+    const loginEmail = email?.trim()
+      ? email.toLowerCase().trim()
+      : `${uniqueId.toLowerCase()}@farmer.cems.local`
+    const result = await pool.query(
+      `INSERT INTO users (name, email, phone, password_hash, role, location, status, unique_id, payment_details, manager_id)
+       VALUES ($1,$2,$3,$4,'farmer',$5,'Active',$6,$7,$8)
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, payment_details, manager_id`,
+      [
+        name.trim(),
+        loginEmail,
+        phone?.trim() || null,
+        hash,
+        location?.trim() || null,
+        uniqueId,
+        payment_details?.trim() || null,
+        req.user.id
+      ]
+    )
+
+    res.status(201).json(result.rows[0])
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "Email already exists" })
+    }
+    res.status(500).json({ error: error.message })
+  }
+})
+
 router.post("/login", async (req, res) => {
   const { email, password } = req.body
   if (!email || !password) {
@@ -90,7 +131,28 @@ router.post("/login", async (req, res) => {
 
 router.get("/me", auth, async (req, res) => {
   const result = await pool.query(
-    "SELECT id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details FROM users WHERE id = $1",
+    `SELECT
+       u.id,
+       u.name,
+       u.email,
+       u.phone,
+       u.role,
+       u.location,
+       u.status,
+       u.created_at,
+       u.unique_id,
+       u.national_id,
+       u.verified,
+       u.payment_details,
+       u.manager_id,
+       manager.name AS manager_name,
+       manager.email AS manager_email,
+       manager.phone AS manager_phone,
+       manager.unique_id AS manager_unique_id,
+       manager.verified AS manager_verified
+     FROM users u
+     LEFT JOIN users manager ON manager.id = u.manager_id
+     WHERE u.id = $1`,
     [req.user.id]
   )
   if (!result.rows[0]) {
@@ -109,7 +171,7 @@ router.patch("/me", auth, async (req, res) => {
       `UPDATE users
        SET name = $1, phone = $2, location = $3, payment_details = $4
        WHERE id = $5
-       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details`,
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details, manager_id`,
       [name.trim(), phone?.trim() || null, location?.trim() || null, payment_details?.trim() || null, req.user.id]
     )
     res.json(result.rows[0])
@@ -154,6 +216,65 @@ router.get("/managers/verified", auth, async (req, res) => {
   }
 })
 
+router.patch("/me/manager", auth, async (req, res) => {
+  if (req.user.role !== "farmer") {
+    return res.status(403).json({ error: "Only farmers can link to a manager" })
+  }
+
+  const { manager_id } = req.body
+  if (!manager_id) {
+    return res.status(400).json({ error: "manager_id is required" })
+  }
+
+  try {
+    const manager = await pool.query(
+      "SELECT id FROM users WHERE id = $1 AND role = 'manager' AND verified = TRUE",
+      [manager_id]
+    )
+    if (!manager.rows[0]) {
+      return res.status(404).json({ error: "Verified manager not found" })
+    }
+
+    const result = await pool.query(
+      `UPDATE users
+       SET manager_id = $1
+       WHERE id = $2
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details, manager_id`,
+      [manager_id, req.user.id]
+    )
+
+    const linkedProfile = await pool.query(
+      `SELECT
+         u.id,
+         u.name,
+         u.email,
+         u.phone,
+         u.role,
+         u.location,
+         u.status,
+         u.created_at,
+         u.unique_id,
+         u.national_id,
+         u.verified,
+         u.payment_details,
+         u.manager_id,
+         manager.name AS manager_name,
+         manager.email AS manager_email,
+         manager.phone AS manager_phone,
+         manager.unique_id AS manager_unique_id,
+         manager.verified AS manager_verified
+       FROM users u
+       LEFT JOIN users manager ON manager.id = u.manager_id
+       WHERE u.id = $1`,
+      [result.rows[0].id]
+    )
+
+    res.json(linkedProfile.rows[0])
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 router.get("/users", auth, async (req, res) => {
   if (req.user.role !== "manager") {
     return res.status(403).json({ error: "Managers only" })
@@ -162,9 +283,23 @@ router.get("/users", auth, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT
-        id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details
-      FROM users
-      ORDER BY created_at DESC
+        u.id,
+        u.name,
+        u.email,
+        u.phone,
+        u.role,
+        u.location,
+        u.status,
+        u.created_at,
+        u.unique_id,
+        u.national_id,
+        u.verified,
+        u.payment_details,
+        u.manager_id,
+        manager.name AS manager_name
+      FROM users u
+      LEFT JOIN users manager ON manager.id = u.manager_id
+      ORDER BY u.created_at DESC
     `)
 
     res.json(result.rows)

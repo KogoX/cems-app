@@ -20,32 +20,20 @@ router.get("/", auth, async (req, res) => {
       where = "WHERE y.farmer_id = $1"
     }
 
-    let photosSelect = "'[]'::json AS photos"
-    if (req.user.role === "buyer") {
-      photosSelect = `
-        COALESCE(
-          (
-            SELECT json_agg(image_data)
-            FROM (
-              SELECT image_data 
-              FROM yield_photos 
-              WHERE yield_id = y.id 
-              ORDER BY created_at ASC 
-              LIMIT 1
-            ) sub
-          ),
-          '[]'::json
-        ) AS photos
-      `
-    } else {
-      // Manager and Farmer need to see all photos
-      photosSelect = `
-        COALESCE(
-          (SELECT json_agg(image_data) FROM yield_photos WHERE yield_id = y.id),
-          '[]'::json
-        ) AS photos
-      `
-    }
+    const photosSelect = `
+      COALESCE(
+        (
+          SELECT json_agg(image_data)
+          FROM (
+            SELECT image_data
+            FROM yield_photos
+            WHERE yield_id = y.id
+            ORDER BY created_at ASC
+          ) sub
+        ),
+        '[]'::json
+      ) AS photos
+    `
 
     const result = await pool.query(
       `
