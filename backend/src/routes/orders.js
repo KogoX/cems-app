@@ -23,6 +23,12 @@ router.get("/", auth, async (req, res) => {
       where = "WHERE o.farmer_id = $1"
     }
 
+    const limit = parseInt(req.query.limit) || 50
+    const offset = parseInt(req.query.offset) || 0
+    values.push(limit, offset)
+    const limitIdx = values.length - 1
+    const offsetIdx = values.length
+
     const result = await pool.query(
       `
       SELECT
@@ -65,6 +71,7 @@ router.get("/", auth, async (req, res) => {
       ) p ON true
       ${where}
       ORDER BY o.created_at DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       values
     )

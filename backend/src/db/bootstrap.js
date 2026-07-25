@@ -175,6 +175,15 @@ async function bootstrapDatabase(pool) {
   await pool.query("CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id)")
   await pool.query("CREATE INDEX IF NOT EXISTS idx_notifications_is_read ON notifications(is_read)")
   await pool.query("CREATE INDEX IF NOT EXISTS idx_users_manager_id ON users(manager_id)")
+
+  // New Performance Indexes for Optimization
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_yields_status ON yields(status)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_yields_created_at ON yields(created_at DESC)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_payouts_status ON payouts(status)")
+  await pool.query("CREATE INDEX IF NOT EXISTS idx_payouts_created_at ON payouts(created_at DESC)")
 }
 
 async function ensureOrderYieldIdUuid(pool) {

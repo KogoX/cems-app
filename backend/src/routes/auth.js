@@ -281,6 +281,9 @@ router.get("/users", auth, async (req, res) => {
   }
 
   try {
+    const limit = parseInt(req.query.limit) || 50
+    const offset = parseInt(req.query.offset) || 0
+
     const result = await pool.query(`
       SELECT
         u.id,
@@ -300,7 +303,8 @@ router.get("/users", auth, async (req, res) => {
       FROM users u
       LEFT JOIN users manager ON manager.id = u.manager_id
       ORDER BY u.created_at DESC
-    `)
+      LIMIT $1 OFFSET $2
+    \`, [limit, offset])
 
     res.json(result.rows)
   } catch (error) {

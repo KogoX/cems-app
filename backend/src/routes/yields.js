@@ -20,6 +20,14 @@ router.get("/", auth, async (req, res) => {
       where = "WHERE y.farmer_id = $1"
     }
 
+    const limit = parseInt(req.query.limit) || 50
+    const offset = parseInt(req.query.offset) || 0
+    
+    // Add pagination params
+    values.push(limit, offset)
+    const limitIdx = values.length - 1
+    const offsetIdx = values.length
+
     const photosSelect = `
       COALESCE(
         (
@@ -52,6 +60,7 @@ router.get("/", auth, async (req, res) => {
       LEFT JOIN users u ON y.farmer_id = u.id
       ${where}
       ORDER BY y.created_at DESC
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
       `,
       values
     )
