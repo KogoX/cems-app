@@ -73,11 +73,9 @@ async function createTransferRecipient({ name, type, accountNumber, bankCode, cu
     type,
     name,
     account_number: accountNumber,
+    bank_code: bankCode || (type === "mobile_money" ? "MPESA" : undefined),
     currency,
     metadata: metadata || {}
-  }
-  if (type === "nuban") {
-    body.bank_code = bankCode
   }
   const result = await paystackFetch("/transferrecipient", {
     method: "POST",

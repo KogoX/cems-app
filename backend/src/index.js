@@ -65,9 +65,18 @@ app.use("/api/payments", require("./routes/payments"))
 app.use("/api/payouts", require("./routes/payouts"))
 
 app.use((error, _req, res, _next) => {
-  console.error(error)
-  res.status(500).json({ error: "Internal server error" })
-})
+  if (
+    error instanceof SyntaxError &&
+    error.status === 400 &&
+    "body" in error
+  ) {
+    return res
+      .status(400)
+      .json({ error: "Invalid JSON format in request body" });
+  }
+  console.error(error);
+  res.status(500).json({ error: "Internal server error" });
+});
 
 async function start() {
   await bootstrapDatabase(pool)

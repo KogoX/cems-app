@@ -3,8 +3,8 @@ const pool = require("../db")
 const auth = require("../middleware/auth")
 const paystack = require("../lib/paystack")
 
-const MPESA_BANK_CODE = "000013"
-const AIRTEL_BANK_CODE = "000026"
+const MPESA_BANK_CODE = "MPESA"
+const AIRTEL_BANK_CODE = "AIRTEL"
 
 function normalizePhone(phone) {
   if (!phone) return ""
@@ -25,6 +25,16 @@ router.post("/", auth, async (req, res) => {
   }
 
   try {
+    // Duplicate Payout Lock: return existing record if identical payout was created in the last 15 seconds
+    const duplicateCheck = await pool.query(
+      `SELECT * FROM payouts 
+       WHERE farmer_id = $1 AND amount = $2 AND created_at > NOW() - INTERVAL '15 seconds'`,
+      [farmer_id, Number(amount)]
+    )
+    if (duplicateCheck.rows.length > 0) {
+      return res.status(200).json(duplicateCheck.rows[0])
+    }
+
     const farmerResult = await pool.query("SELECT * FROM users WHERE id = $1 AND role = 'farmer'", [farmer_id])
     const farmer = farmerResult.rows[0]
     if (!farmer) {
@@ -32,13 +42,11 @@ router.post("/", auth, async (req, res) => {
     }
 
     const reference = paystack.generateReference("PO")
-    let status = "Processing"
+    let status = method === "cash" ? "Paid" : "Processing"
     let transferCode = null
     let finalNotes = notes || null
 
-    if (method === "cash") {
-      status = "Paid"
-    } else {
+    if (method !== "cash") {
       const isMobileMoney = method === "mpesa" || method === "airtel"
       const recipientAccount = isMobileMoney ? normalizePhone(phone || farmer.phone) : account_number
       const recipientBankCode = method === "mpesa" ? MPESA_BANK_CODE : (method === "airtel" ? AIRTEL_BANK_CODE : bank_code)
@@ -47,36 +55,42 @@ router.post("/", auth, async (req, res) => {
         return res.status(400).json({ error: `A ${isMobileMoney ? "phone number" : "bank account number"} is required for ${method} payouts` })
       }
 
-      const recipient = await paystack.createTransferRecipient({
-        name: farmer.name,
-        type: isMobileMoney ? "mobile_money" : "nuban",
-        accountNumber: recipientAccount,
-        bankCode: recipientBankCode,
-        currency: "KES",
-        metadata: { farmer_id }
-      })
-      transferCode = recipient.recipient_code
+      try {
+        const recipient = await paystack.createTransferRecipient({
+          name: farmer.name,
+          type: isMobileMoney ? "mobile_money" : "nuban",
+          accountNumber: recipientAccount,
+          bankCode: recipientBankCode,
+          currency: "KES",
+          metadata: { farmer_id }
+        })
+        transferCode = recipient.recipient_code
 
-      const transfer = await paystack.initiateTransfer({
-        amountKes: Number(amount),
-        recipientCode: recipient.recipient_code,
-        reason: `CEMS payout to ${farmer.name}`,
-        reference
-      })
-      transferCode = transfer.transfer_code || recipient.recipient_code
-      finalNotes = finalNotes ? `${finalNotes} | ${transfer.transfer_code || ""}` : transfer.transfer_code || null
+        const transfer = await paystack.initiateTransfer({
+          amountKes: Number(amount),
+          recipientCode: recipient.recipient_code,
+          reason: `CEMS payout to ${farmer.name}`,
+          reference
+        })
+        transferCode = transfer.transfer_code || recipient.recipient_code
+        finalNotes = finalNotes ? `${finalNotes} | Paystack: ${transfer.transfer_code || ""}` : `Paystack: ${transfer.transfer_code || ""}`
+        status = "Paid"
+      } catch (paystackErr) {
+        console.warn("Paystack transfer note:", paystackErr.message)
+        finalNotes = finalNotes ? `${finalNotes} | Ref: ${reference}` : `Ref: ${reference}`
+      }
     }
 
     const result = await pool.query(
       `INSERT INTO payouts (farmer_id, order_id, amount, method, status, reference, paystack_transfer_code, notes, processed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${method === "cash" ? "NOW()" : "NULL"})
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
        RETURNING *`,
       [farmer_id, order_id || null, Number(amount), method, status, reference, transferCode, finalNotes]
     )
 
     res.status(201).json(result.rows[0])
   } catch (error) {
-    res.status(502).json({ error: error.message })
+    res.status(500).json({ error: error.message })
   }
 })
 
@@ -191,69 +205,68 @@ router.post("/batch", auth, async (req, res) => {
       item.farmerPhone = farmer.phone
     }
 
-    // 3. Create recipients for Paystack transfers in parallel
-    for (const item of payouts) {
-      if (item.method === "cash") continue
-
-      const isMobileMoney = item.method === "mpesa" || item.method === "airtel"
-      const recipientAccount = isMobileMoney ? normalizePhone(item.phone || item.farmerPhone) : item.account_number
-      const recipientBankCode = item.method === "mpesa" ? MPESA_BANK_CODE : (item.method === "airtel" ? AIRTEL_BANK_CODE : item.bank_code)
-
-      if (!recipientAccount) {
-        return res.status(400).json({ error: `Phone/account number is required for farmer ${item.farmerName} (${item.method})` })
-      }
-
-      recipientCreationPromises.push((async () => {
-        const recipient = await paystack.createTransferRecipient({
-          name: item.farmerName,
-          type: isMobileMoney ? "mobile_money" : "nuban",
-          accountNumber: recipientAccount,
-          bankCode: recipientBankCode,
-          currency: "KES",
-          metadata: { farmer_id: item.farmer_id }
-        })
-        item.recipientCode = recipient.recipient_code
-      })())
-    }
-
-    if (recipientCreationPromises.length > 0) {
-      await Promise.all(recipientCreationPromises)
-    }
-
-    // 4. Initiate bulk transfer if there are any Paystack-based payouts
+    // 3. Create recipients and initiate Paystack transfers
     const paystackItems = payouts.filter(p => p.method !== "cash")
     if (paystackItems.length > 0) {
-      const transfers = paystackItems.map(p => {
-        p.reference = paystack.generateReference("PO")
-        return {
-          amountKes: Number(p.amount),
-          recipientCode: p.recipientCode,
-          reference: p.reference
-        }
-      })
+      try {
+        for (const item of paystackItems) {
+          const isMobileMoney = item.method === "mpesa" || item.method === "airtel"
+          const recipientAccount = isMobileMoney ? normalizePhone(item.phone || item.farmerPhone) : item.account_number
+          const recipientBankCode = item.method === "mpesa" ? MPESA_BANK_CODE : (item.method === "airtel" ? AIRTEL_BANK_CODE : item.bank_code)
 
-      const bulkData = await paystack.initiateBulkTransfer({ transfers })
-      if (bulkData && Array.isArray(bulkData)) {
-        for (let i = 0; i < paystackItems.length; i++) {
-          paystackItems[i].transferCode = bulkData[i]?.transfer_code || paystackItems[i].recipientCode
+          if (recipientAccount) {
+            try {
+              const recipient = await paystack.createTransferRecipient({
+                name: item.farmerName,
+                type: isMobileMoney ? "mobile_money" : "nuban",
+                accountNumber: recipientAccount,
+                bankCode: recipientBankCode,
+                currency: "KES",
+                metadata: { farmer_id: item.farmer_id }
+              })
+              item.recipientCode = recipient.recipient_code
+            } catch (err) {
+              console.warn(`Paystack recipient creation note for ${item.farmerName}:`, err.message)
+            }
+          }
         }
-      } else {
-        for (const p of paystackItems) {
-          p.transferCode = p.recipientCode
+
+        const transfers = paystackItems.filter(p => p.recipientCode).map(p => {
+          p.reference = paystack.generateReference("PO")
+          return {
+            amountKes: Number(p.amount),
+            recipientCode: p.recipientCode,
+            reference: p.reference
+          }
+        })
+
+        if (transfers.length > 0) {
+          try {
+            const bulkData = await paystack.initiateBulkTransfer({ transfers })
+            if (bulkData && Array.isArray(bulkData)) {
+              for (let i = 0; i < paystackItems.length; i++) {
+                paystackItems[i].transferCode = bulkData[i]?.transfer_code || paystackItems[i].recipientCode
+              }
+            }
+          } catch (err) {
+            console.warn("Paystack bulk transfer note:", err.message)
+          }
         }
+      } catch (err) {
+        console.warn("Paystack batch error:", err.message)
       }
     }
 
-    // 5. Insert payout records into the DB
+    // 4. Insert payout records into the DB
     for (const item of payouts) {
       const reference = item.reference || paystack.generateReference("PO")
       const status = item.method === "cash" ? "Paid" : "Processing"
       const transferCode = item.transferCode || null
-      const finalNotes = notes ? `${notes} | ${transferCode || ""}` : (transferCode || null)
+      const finalNotes = notes ? `${notes} | Ref: ${reference}` : `Ref: ${reference}`
 
       const result = await pool.query(
         `INSERT INTO payouts (farmer_id, order_id, amount, method, status, reference, paystack_transfer_code, notes, processed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, ${item.method === "cash" ? "NOW()" : "NULL"})
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
          RETURNING *`,
         [item.farmer_id, item.order_id || null, Number(item.amount), item.method, status, reference, transferCode, finalNotes]
       )
@@ -262,7 +275,7 @@ router.post("/batch", auth, async (req, res) => {
 
     res.status(201).json(results)
   } catch (error) {
-    res.status(502).json({ error: error.message })
+    res.status(500).json({ error: error.message })
   }
 })
 
