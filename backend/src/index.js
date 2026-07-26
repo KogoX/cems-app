@@ -18,6 +18,11 @@ app.get("/api/health", async (_req, res) => {
   }
 })
 
+app.get("/api/market/rates", (_req, res) => {
+  const { MARKET_RATES } = require("./lib/marketRates")
+  res.json({ ok: true, rates: MARKET_RATES })
+})
+
 app.post("/api/payments/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   const signature = req.headers["x-paystack-signature"]
   const rawBody = req.body

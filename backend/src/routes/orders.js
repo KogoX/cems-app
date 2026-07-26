@@ -92,8 +92,12 @@ router.post("/", auth, async (req, res) => {
     return res.status(400).json({ error: "buyer_id is required" })
   }
 
+  const { getMarketRate } = require("../lib/marketRates")
   const qty = Number(quantity)
-  const price = Number(unitPrice || 1200)
+  let price = Number(unitPrice)
+  if (!price || isNaN(price)) {
+    price = getMarketRate("A").buyerPrice
+  }
   const total = qty * price
 
   try {
@@ -189,6 +193,9 @@ router.patch("/:id/status", auth, async (req, res) => {
       return res.json(result.rows[0])
     }
 
+    const loc = trackingLocation !== undefined ? trackingLocation : tracking_location
+    const est = estimatedDelivery !== undefined ? estimatedDelivery : estimated_delivery
+
     let updateQuery = `
       UPDATE orders
       SET status = $1
@@ -196,14 +203,14 @@ router.patch("/:id/status", auth, async (req, res) => {
     const updateParams = [status, req.params.id]
     let paramIndex = 3
 
-    if (trackingLocation !== undefined) {
+    if (loc !== undefined) {
       updateQuery += `, tracking_location = $${paramIndex}`
-      updateParams.push(trackingLocation)
+      updateParams.push(loc)
       paramIndex++
     }
-    if (estimatedDelivery !== undefined) {
+    if (est !== undefined) {
       updateQuery += `, estimated_delivery = $${paramIndex}`
-      updateParams.push(estimatedDelivery ? new Date(estimatedDelivery) : null)
+      updateParams.push(est ? new Date(est) : null)
       paramIndex++
     }
 
@@ -218,18 +225,16 @@ router.patch("/:id/status", auth, async (req, res) => {
     const updatedOrder = result.rows[0]
 
     // If tracking was updated, notify the buyer
-    if (status === "In Transit" || status === "Ready for Pickup") {
-      let msg = status === "In Transit" 
-        ? "Your order is now in transit." 
-        : "Your order is ready for pickup."
-      if (trackingLocation) {
-        msg += ` Current location: ${trackingLocation}.`
+    if (status === "In Transit" || status === "Ready for Pickup" || status === "Picked Up" || loc) {
+      let msg = `Your shipment status is now: ${status}.`
+      if (loc) {
+        msg += ` Location: ${loc}.`
       }
       
       await pool.query(
         "INSERT INTO notifications (user_id, title, message) VALUES ($1, $2, $3)",
-        [updatedOrder.buyer_id, "Shipment Update", msg]
-      )
+        [updatedOrder.buyer_id, "Shipment Tracking Update", msg]
+      ).catch(() => {})
     }
 
     res.json(updatedOrder)

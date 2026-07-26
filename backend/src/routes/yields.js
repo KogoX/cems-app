@@ -37,6 +37,7 @@ router.get("/", auth, async (req, res) => {
             FROM yield_photos
             WHERE yield_id = y.id
             ORDER BY created_at ASC
+            LIMIT 1
           ) sub
         ),
         '[]'::json
@@ -71,6 +72,18 @@ router.get("/", auth, async (req, res) => {
   }
 })
 
+router.get("/:id/photos", auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      "SELECT image_data FROM yield_photos WHERE yield_id = $1 ORDER BY created_at ASC",
+      [req.params.id]
+    )
+    res.json(result.rows.map((r) => r.image_data))
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 router.post("/", auth, async (req, res) => {
   const { cropSeason, variety, quantity, grade, date, farmer_id, photos } = req.body
 
@@ -98,7 +111,11 @@ router.post("/", auth, async (req, res) => {
       ]
     )
     const yieldRecord = result.rows[0]
-    const safePhotos = Array.isArray(photos) ? photos.slice(0, 5).filter(Boolean) : []
+  const safePhotos = Array.isArray(photos) ? photos.slice(0, 10).filter(Boolean) : []
+  const totalBytes = safePhotos.reduce((acc, p) => acc + p.length, 0)
+  if (totalBytes > 8 * 1024 * 1024) {
+    return res.status(400).json({ error: "Total harvest photos exceed 8MB limit. Please select fewer images or compress them." })
+  }
 
     for (const imageData of safePhotos) {
       await pool.query(
