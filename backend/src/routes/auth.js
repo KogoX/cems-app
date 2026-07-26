@@ -304,7 +304,7 @@ router.get("/users", auth, async (req, res) => {
       LEFT JOIN users manager ON manager.id = u.manager_id
       ORDER BY u.created_at DESC
       LIMIT $1 OFFSET $2
-    \`, [limit, offset])
+    `, [limit, offset])
 
     res.json(result.rows)
   } catch (error) {

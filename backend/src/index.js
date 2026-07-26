@@ -32,8 +32,11 @@ app.post("/api/payments/webhook", express.raw({ type: "application/json" }), asy
       const paymentResult = await pool.query("SELECT * FROM payments WHERE paystack_reference = $1", [reference])
       const payment = paymentResult.rows[0]
       if (payment && payment.status !== "Verified") {
-        await pool.query("UPDATE payments SET status = 'Verified' WHERE id = $1", [payment.id])
-        await pool.query("UPDATE orders SET status = 'Paid' WHERE id = $1", [payment.order_id])
+        const { withTransaction } = require("./db")
+        await withTransaction(async (client) => {
+          await client.query("UPDATE payments SET status = 'Verified' WHERE id = $1", [payment.id])
+          await client.query("UPDATE orders SET status = 'Paid' WHERE id = $1", [payment.order_id])
+        })
       }
     } else if (event.event === "transfer.success") {
       const reference = event.data?.reference
@@ -87,6 +90,10 @@ async function shutdown() {
 }
 process.on("SIGINT", shutdown)
 process.on("SIGTERM", shutdown)
+process.on("SIGUSR2", async () => {
+  await pool.end()
+  process.exit(0)
+})
 
 module.exports = app
 
