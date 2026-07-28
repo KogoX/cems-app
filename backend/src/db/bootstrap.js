@@ -67,6 +67,7 @@ async function bootstrapDatabase(pool) {
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount NUMERIC(14, 2) NOT NULL DEFAULT 0;
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'Processing';
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS farmer_id UUID;
+    ALTER TABLE orders ADD COLUMN IF NOT EXISTS yield_id UUID;
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_location TEXT;
     ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_delivery TIMESTAMPTZ;
 
@@ -143,29 +144,33 @@ async function bootstrapDatabase(pool) {
     CREATE INDEX IF NOT EXISTS idx_payouts_created_at ON payouts(created_at DESC);
   `
 
-  await pool.query(batchSql)
+  try {
+    await pool.query(batchSql)
 
-  // Backfill unassigned unique IDs
-  const unassigned = await pool.query("SELECT id FROM users WHERE unique_id IS NULL")
-  for (const row of unassigned.rows) {
-    let code = ""
-    while (true) {
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-      let generated = ""
-      for (let i = 0; i < 5; i++) {
-        generated += chars.charAt(Math.floor(Math.random() * chars.length))
+    // Backfill unassigned unique IDs
+    const unassigned = await pool.query("SELECT id FROM users WHERE unique_id IS NULL")
+    for (const row of unassigned.rows) {
+      let code = ""
+      while (true) {
+        const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        let generated = ""
+        for (let i = 0; i < 5; i++) {
+          generated += chars.charAt(Math.floor(Math.random() * chars.length))
+        }
+        const duplicate = await pool.query("SELECT id FROM users WHERE unique_id = $1", [generated])
+        if (duplicate.rows.length === 0) {
+          code = generated
+          break
+        }
       }
-      const duplicate = await pool.query("SELECT id FROM users WHERE unique_id = $1", [generated])
-      if (duplicate.rows.length === 0) {
-        code = generated
-        break
-      }
+      await pool.query("UPDATE users SET unique_id = $1 WHERE id = $2", [code, row.id])
     }
-    await pool.query("UPDATE users SET unique_id = $1 WHERE id = $2", [code, row.id])
-  }
 
-  await ensureOrderYieldIdUuid(pool)
-  await pool.query("UPDATE orders SET total_amount = quantity * unit_price WHERE total_amount = 0")
+    await ensureOrderYieldIdUuid(pool)
+    await pool.query("UPDATE orders SET total_amount = quantity * unit_price WHERE total_amount = 0")
+  } catch (err) {
+    console.warn("Database bootstrap skipped/failed due to connection issues:", err.message)
+  }
 }
 
 async function ensureOrderYieldIdUuid(pool) {
