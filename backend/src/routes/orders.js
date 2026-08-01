@@ -69,6 +69,7 @@ router.get("/", auth, async (req, res) => {
               FROM yield_photos
               WHERE yield_id = o.yield_id
               ORDER BY created_at ASC
+              LIMIT 1
             ) photos
           ),
           '[]'::json

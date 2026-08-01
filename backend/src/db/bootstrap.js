@@ -130,6 +130,7 @@ async function bootstrapDatabase(pool) {
     CREATE INDEX IF NOT EXISTS idx_orders_yield_id ON orders(yield_id);
     CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id);
     CREATE INDEX IF NOT EXISTS idx_payments_buyer_id ON payments(buyer_id);
+    CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_payouts_farmer_id ON payouts(farmer_id);
     CREATE INDEX IF NOT EXISTS idx_payouts_order_id ON payouts(order_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
