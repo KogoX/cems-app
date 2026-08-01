@@ -150,15 +150,28 @@ router.post("/verify", auth, async (req, res) => {
 router.get("/", auth, async (req, res) => {
   try {
     const values = []
-    let where = ""
+    const whereConditions = []
 
     if (req.user.role === "buyer") {
       values.push(req.user.id)
-      where = "WHERE p.buyer_id = $1"
+      whereConditions.push(`p.buyer_id = $${values.length}`)
     } else if (req.user.role === "farmer") {
       values.push(req.user.id)
-      where = "WHERE o.farmer_id = $1"
+      whereConditions.push(`o.farmer_id = $${values.length}`)
     }
+
+    if (req.query.startDate) {
+      values.push(req.query.startDate)
+      whereConditions.push(`p.created_at >= $${values.length}`)
+    }
+
+    if (req.query.endDate) {
+      const end = req.query.endDate.includes("T") ? req.query.endDate : `${req.query.endDate}T23:59:59.999Z`
+      values.push(end)
+      whereConditions.push(`p.created_at <= $${values.length}`)
+    }
+
+    const where = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : ""
 
     const limit = parseInt(req.query.limit) || 50
     const offset = parseInt(req.query.offset) || 0

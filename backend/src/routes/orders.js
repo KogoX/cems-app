@@ -52,6 +52,7 @@ router.get("/", auth, async (req, res) => {
         buyer.name AS buyer,
         farmer.name AS farmer,
         o.produce,
+        y.grade,
         o.quantity,
         o.unit_price,
         o.total_amount,
@@ -75,6 +76,7 @@ router.get("/", auth, async (req, res) => {
       FROM orders o
       LEFT JOIN users buyer ON o.buyer_id = buyer.id
       LEFT JOIN users farmer ON o.farmer_id = farmer.id
+      LEFT JOIN yields y ON o.yield_id = y.id
       LEFT JOIN LATERAL (
         SELECT status
         FROM payments p2
