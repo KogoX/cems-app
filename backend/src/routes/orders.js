@@ -63,11 +63,12 @@ router.get("/", auth, async (req, res) => {
         p.status AS payment_status,
         COALESCE(
           (
-            SELECT json_agg(image_data)
+            SELECT json_agg(photo_url)
             FROM (
-              SELECT image_data
+              SELECT COALESCE(thumbnail_url, image_url) AS photo_url
               FROM yield_photos
               WHERE yield_id = o.yield_id
+                AND COALESCE(thumbnail_url, image_url) IS NOT NULL
               ORDER BY created_at ASC
               LIMIT 1
             ) photos

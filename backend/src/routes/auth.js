@@ -34,16 +34,101 @@ router.post("/register", async (req, res) => {
   try {
     const hash = await bcrypt.hash(password, 10)
     const uniqueId = await getUniqueId(pool)
+    let isSuperAdmin = false
+    let status = "Active"
+    let verified = false
+
+    if (role === "manager") {
+      const managerCheck = await pool.query("SELECT COUNT(*)::int AS count FROM users WHERE role = 'manager'")
+      const existingManagers = Number(managerCheck.rows[0].count)
+      if (existingManagers === 0) {
+        // First manager to register becomes the Super Admin
+        isSuperAdmin = true
+        status = "Active"
+        verified = true
+      } else {
+        // Subsequent manager registering must be approved by Super Admin
+        isSuperAdmin = false
+        status = "Pending"
+        verified = false
+      }
+    }
+
     const result = await pool.query(
-      `INSERT INTO users (name, email, phone, password_hash, role, location, unique_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       RETURNING id, name, email, phone, role, location, unique_id`,
-      [name, email.toLowerCase().trim(), phone || null, hash, role, location || null, uniqueId]
+      `INSERT INTO users (name, email, phone, password_hash, role, location, status, verified, is_super_admin, unique_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING id, name, email, phone, role, location, status, verified, is_super_admin, unique_id`,
+      [
+        name.trim(),
+        email.toLowerCase().trim(),
+        phone || null,
+        hash,
+        role,
+        location || null,
+        status,
+        verified,
+        isSuperAdmin,
+        uniqueId,
+      ]
     )
 
     const user = result.rows[0]
+    const formattedUser = {
+      ...user,
+      is_super_admin: Boolean(user.is_super_admin),
+      verified: Boolean(user.verified)
+    }
+
+    if (role === "manager" && !isSuperAdmin) {
+      return res.status(201).json({
+        user: formattedUser,
+        pendingApproval: true,
+        message: "Manager account created! Your account is pending approval by the Super Admin manager."
+      })
+    }
+
     const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "2d" })
-    res.status(201).json({ token, user })
+    res.status(201).json({ token, user: formattedUser })
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({ error: "Email already exists" })
+    }
+    res.status(500).json({ error: error.message })
+  }
+})
+
+router.post("/managers", auth, async (req, res) => {
+  if (req.user.role !== "manager" || !req.user.is_super_admin) {
+    return res.status(403).json({ error: "Only the Super Admin manager can register new managers directly" })
+  }
+
+  const { name, email, phone, password, location } = req.body
+  if (!name || !password || !email) {
+    return res.status(400).json({ error: "name, email and password are required" })
+  }
+
+  try {
+    const hash = await bcrypt.hash(password, 10)
+    const uniqueId = await getUniqueId(pool)
+    const result = await pool.query(
+      `INSERT INTO users (name, email, phone, password_hash, role, location, status, verified, is_super_admin, unique_id)
+       VALUES ($1,$2,$3,$4,'manager',$5,'Active',TRUE,FALSE,$6)
+       RETURNING id, name, email, phone, role, location, status, verified, is_super_admin, created_at, unique_id`,
+      [
+        name.trim(),
+        email.toLowerCase().trim(),
+        phone?.trim() || null,
+        hash,
+        location?.trim() || null,
+        uniqueId,
+      ]
+    )
+
+    res.status(201).json({
+      ...result.rows[0],
+      is_super_admin: Boolean(result.rows[0].is_super_admin),
+      verified: Boolean(result.rows[0].verified)
+    })
   } catch (error) {
     if (error.code === "23505") {
       return res.status(409).json({ error: "Email already exists" })
@@ -111,6 +196,17 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid login details" })
     }
 
+    if (user.role === "manager") {
+      if (user.status === "Pending") {
+        return res.status(403).json({ error: "Your manager account is pending approval by the Super Admin manager." })
+      }
+      if (user.status === "Suspended") {
+        return res.status(403).json({ error: "Your manager account has been suspended by the Super Admin manager." })
+      }
+    } else if (user.status === "Suspended") {
+      return res.status(403).json({ error: "Your account has been suspended." })
+    }
+
     const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "2d" })
     res.json({
       token,
@@ -121,7 +217,10 @@ router.post("/login", async (req, res) => {
         role: user.role,
         phone: user.phone,
         location: user.location,
-        unique_id: user.unique_id
+        unique_id: user.unique_id,
+        status: user.status,
+        verified: Boolean(user.verified),
+        is_super_admin: Boolean(user.is_super_admin),
       }
     })
   } catch (error) {
@@ -167,6 +266,7 @@ router.get("/me", auth, async (req, res) => {
        u.unique_id,
        u.national_id,
        u.verified,
+       u.is_super_admin,
        u.payment_details,
        u.manager_id,
        manager.name AS manager_name,
@@ -182,7 +282,12 @@ router.get("/me", auth, async (req, res) => {
   if (!result.rows[0]) {
     return res.status(404).json({ error: "User not found" })
   }
-  res.json(result.rows[0])
+  const userRow = result.rows[0]
+  res.json({
+    ...userRow,
+    is_super_admin: Boolean(userRow.is_super_admin),
+    verified: Boolean(userRow.verified)
+  })
 })
 
 router.patch("/me", auth, async (req, res) => {
@@ -195,10 +300,15 @@ router.patch("/me", auth, async (req, res) => {
       `UPDATE users
        SET name = $1, phone = $2, location = $3, payment_details = $4
        WHERE id = $5
-       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details, manager_id`,
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, is_super_admin, payment_details, manager_id`,
       [name.trim(), phone?.trim() || null, location?.trim() || null, payment_details?.trim() || null, req.user.id]
     )
-    res.json(result.rows[0])
+    const userRow = result.rows[0]
+    res.json({
+      ...userRow,
+      is_super_admin: Boolean(userRow.is_super_admin),
+      verified: Boolean(userRow.verified)
+    })
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
@@ -232,10 +342,15 @@ router.patch("/me/verify", auth, async (req, res) => {
       `UPDATE users
        SET national_id = $1, verified = TRUE
        WHERE id = $2
-       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified`,
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, is_super_admin`,
       [national_id.trim().toUpperCase(), req.user.id]
     )
-    res.json(result.rows[0])
+    const userRow = result.rows[0]
+    res.json({
+      ...userRow,
+      is_super_admin: Boolean(userRow.is_super_admin),
+      verified: Boolean(userRow.verified)
+    })
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
@@ -244,12 +359,16 @@ router.patch("/me/verify", auth, async (req, res) => {
 router.get("/managers/verified", auth, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, name, email, phone, unique_id, verified
+      `SELECT id, name, email, phone, unique_id, verified, is_super_admin
        FROM users
        WHERE role = 'manager' AND verified = TRUE
        ORDER BY name ASC`
     )
-    res.json(result.rows)
+    res.json(result.rows.map(row => ({
+      ...row,
+      is_super_admin: Boolean(row.is_super_admin),
+      verified: Boolean(row.verified)
+    })))
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
@@ -278,7 +397,7 @@ router.patch("/me/manager", auth, async (req, res) => {
       `UPDATE users
        SET manager_id = $1
        WHERE id = $2
-       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, payment_details, manager_id`,
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, national_id, verified, is_super_admin, payment_details, manager_id`,
       [manager_id, req.user.id]
     )
 
@@ -295,6 +414,7 @@ router.patch("/me/manager", auth, async (req, res) => {
          u.unique_id,
          u.national_id,
          u.verified,
+         u.is_super_admin,
          u.payment_details,
          u.manager_id,
          manager.name AS manager_name,
@@ -308,7 +428,12 @@ router.patch("/me/manager", auth, async (req, res) => {
       [result.rows[0].id]
     )
 
-    res.json(linkedProfile.rows[0])
+    const userRow = linkedProfile.rows[0]
+    res.json({
+      ...userRow,
+      is_super_admin: Boolean(userRow.is_super_admin),
+      verified: Boolean(userRow.verified)
+    })
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
@@ -336,6 +461,7 @@ router.get("/users", auth, async (req, res) => {
         u.unique_id,
         u.national_id,
         u.verified,
+        u.is_super_admin,
         u.payment_details,
         u.manager_id,
         manager.name AS manager_name
@@ -345,7 +471,11 @@ router.get("/users", auth, async (req, res) => {
       LIMIT $1 OFFSET $2
     `, [limit, offset])
 
-    res.json(result.rows)
+    res.json(result.rows.map(row => ({
+      ...row,
+      is_super_admin: Boolean(row.is_super_admin),
+      verified: Boolean(row.verified)
+    })))
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
@@ -365,19 +495,39 @@ router.patch("/users/:id/status", auth, async (req, res) => {
   }
 
   try {
-    const result = await pool.query(
-      `UPDATE users
-       SET status = $1
-       WHERE id = $2
-       RETURNING id, name, email, phone, role, location, status, created_at, unique_id`,
-      [status, req.params.id]
-    )
-
-    if (!result.rows[0]) {
+    const targetQuery = await pool.query("SELECT id, role, is_super_admin FROM users WHERE id = $1", [req.params.id])
+    if (!targetQuery.rows[0]) {
       return res.status(404).json({ error: "User not found" })
     }
 
-    res.json(result.rows[0])
+    const target = targetQuery.rows[0]
+
+    // Only the Super Admin manager can update another manager's status
+    if (target.role === "manager") {
+      if (!req.user.is_super_admin) {
+        return res.status(403).json({ error: "Only the Super Admin manager can approve or change status of other managers" })
+      }
+      if (target.is_super_admin && status !== "Active") {
+        return res.status(400).json({ error: "The Super Admin manager status cannot be suspended or changed to pending" })
+      }
+    }
+
+    const setVerified = status === "Active" ? true : false
+
+    const result = await pool.query(
+      `UPDATE users
+       SET status = $1, verified = CASE WHEN $2::boolean THEN TRUE ELSE verified END
+       WHERE id = $3
+       RETURNING id, name, email, phone, role, location, status, created_at, unique_id, verified, is_super_admin`,
+      [status, setVerified, req.params.id]
+    )
+
+    const updatedUser = result.rows[0]
+    res.json({
+      ...updatedUser,
+      is_super_admin: Boolean(updatedUser.is_super_admin),
+      verified: Boolean(updatedUser.verified)
+    })
   } catch (error) {
     res.status(500).json({ error: error.message })
   }

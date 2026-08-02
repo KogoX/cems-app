@@ -2,6 +2,29 @@ const router = require("express").Router()
 const pool = require("../db")
 const auth = require("../middleware/auth")
 
+const DEMO_PHOTOS = [
+  {
+    full: "https://images.unsplash.com/photo-1523049673857-eb18f1d7b578?auto=format&fit=crop&w=1200&q=80",
+    thumb: "https://images.unsplash.com/photo-1523049673857-eb18f1d7b578?auto=format&fit=crop&w=320&q=60",
+  },
+  {
+    full: "https://images.unsplash.com/photo-1601039641847-7857b994d704?auto=format&fit=crop&w=1200&q=80",
+    thumb: "https://images.unsplash.com/photo-1601039641847-7857b994d704?auto=format&fit=crop&w=320&q=60",
+  },
+  {
+    full: "https://images.unsplash.com/photo-1590005354167-6da97870c757?auto=format&fit=crop&w=1200&q=80",
+    thumb: "https://images.unsplash.com/photo-1590005354167-6da97870c757?auto=format&fit=crop&w=320&q=60",
+  },
+]
+
+function isRemotePhoto(value) {
+  return typeof value === "string" && /^https?:\/\//i.test(value)
+}
+
+function demoPhoto(index) {
+  return DEMO_PHOTOS[index % DEMO_PHOTOS.length]
+}
+
 const managerOnly = (req, res) => {
   if (req.user.role !== "manager") {
     res.status(403).json({ error: "Managers only" })
@@ -44,11 +67,12 @@ router.get("/", auth, async (req, res) => {
     const photosSelect = `
       COALESCE(
         (
-          SELECT json_agg(image_data)
+          SELECT json_agg(photo_url)
           FROM (
-            SELECT image_data
+            SELECT COALESCE(thumbnail_url, image_url) AS photo_url
             FROM yield_photos
             WHERE yield_id = y.id
+              AND COALESCE(thumbnail_url, image_url) IS NOT NULL
             ORDER BY created_at ASC
             LIMIT 1
           ) sub
@@ -88,10 +112,14 @@ router.get("/", auth, async (req, res) => {
 router.get("/:id/photos", auth, async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT image_data FROM yield_photos WHERE yield_id = $1 ORDER BY created_at ASC",
+      `SELECT COALESCE(image_url, image_data) AS photo
+       FROM yield_photos
+       WHERE yield_id = $1
+         AND COALESCE(image_url, image_data) IS NOT NULL
+       ORDER BY created_at ASC`,
       [req.params.id]
     )
-    res.json(result.rows.map((r) => r.image_data))
+    res.json(result.rows.map((r) => r.photo))
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
@@ -110,6 +138,16 @@ router.post("/", auth, async (req, res) => {
   }
 
   try {
+    const farmerCheck = await pool.query(
+      "SELECT id FROM users WHERE id = $1 AND role = 'farmer'",
+      [farmerId]
+    )
+    if (!farmerCheck.rows[0]) {
+      return res.status(404).json({
+        error: "Farmer account not found. Please log in again or select an existing farmer from the new database.",
+      })
+    }
+
     const result = await pool.query(
       `INSERT INTO yields (farmer_id, crop_season, variety, quantity, grade, created_at)
        VALUES ($1, $2, $3, $4, $5, $6)
@@ -124,17 +162,39 @@ router.post("/", auth, async (req, res) => {
       ]
     )
     const yieldRecord = result.rows[0]
-  const safePhotos = Array.isArray(photos) ? photos.slice(0, 10).filter(Boolean) : []
-  const totalBytes = safePhotos.reduce((acc, p) => acc + p.length, 0)
-  if (totalBytes > 8 * 1024 * 1024) {
-    return res.status(400).json({ error: "Total harvest photos exceed 8MB limit. Please select fewer images or compress them." })
-  }
+    const incomingPhotos = Array.isArray(photos) ? photos.slice(0, 10).filter(Boolean) : []
+    const shouldStoreBase64 = process.env.STORE_HARVEST_BASE64 === "true"
+    const storedPhotos = []
 
-    for (const imageData of safePhotos) {
+    for (let index = 0; index < incomingPhotos.length; index++) {
+      const photo = incomingPhotos[index]
+      if (isRemotePhoto(photo)) {
+        await pool.query(
+          "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
+          [yieldRecord.id, photo, photo]
+        )
+        storedPhotos.push(photo)
+        continue
+      }
+
+      if (shouldStoreBase64) {
+        if (photo.length > 2 * 1024 * 1024) {
+          return res.status(400).json({ error: "Each harvest photo must be under 2MB when base64 storage is enabled." })
+        }
+        await pool.query(
+          "INSERT INTO yield_photos (yield_id, image_data) VALUES ($1, $2)",
+          [yieldRecord.id, photo]
+        )
+        storedPhotos.push(photo)
+        continue
+      }
+
+      const placeholder = demoPhoto(index)
       await pool.query(
-        "INSERT INTO yield_photos (yield_id, image_data) VALUES ($1, $2)",
-        [yieldRecord.id, imageData]
+        "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
+        [yieldRecord.id, placeholder.full, placeholder.thumb]
       )
+      storedPhotos.push(placeholder.thumb)
     }
 
     // Notify all managers
@@ -144,7 +204,7 @@ router.post("/", auth, async (req, res) => {
       FROM users WHERE role = 'manager'
     `, [`/manager?yield=${yieldRecord.id}`])
 
-    res.status(201).json({ ...yieldRecord, photos: safePhotos })
+    res.status(201).json({ ...yieldRecord, photos: storedPhotos })
   } catch (error) {
     res.status(500).json({ error: error.message })
   }
