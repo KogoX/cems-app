@@ -69,12 +69,11 @@ router.get("/", auth, async (req, res) => {
         (
           SELECT json_agg(photo_url)
           FROM (
-            SELECT COALESCE(thumbnail_url, image_url) AS photo_url
+            SELECT COALESCE(thumbnail_url, image_url, image_data) AS photo_url
             FROM yield_photos
             WHERE yield_id = y.id
-              AND COALESCE(thumbnail_url, image_url) IS NOT NULL
+              AND COALESCE(thumbnail_url, image_url, image_data) IS NOT NULL
             ORDER BY created_at ASC
-            LIMIT 1
           ) sub
         ),
         '[]'::json
@@ -163,7 +162,8 @@ router.post("/", auth, async (req, res) => {
     )
     const yieldRecord = result.rows[0]
     const incomingPhotos = Array.isArray(photos) ? photos.slice(0, 10).filter(Boolean) : []
-    const shouldStoreBase64 = process.env.STORE_HARVEST_BASE64 === "true"
+    const { uploadToSupabaseStorage } = require("../lib/storage")
+    const shouldStoreBase64 = process.env.STORE_HARVEST_BASE64 !== "false"
     const storedPhotos = []
 
     for (let index = 0; index < incomingPhotos.length; index++) {
@@ -177,9 +177,20 @@ router.post("/", auth, async (req, res) => {
         continue
       }
 
+      // Try uploading to Supabase Object Storage bucket first (saves egress & DB storage)
+      const cdnUrl = await uploadToSupabaseStorage(photo)
+      if (cdnUrl) {
+        await pool.query(
+          "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
+          [yieldRecord.id, cdnUrl, cdnUrl]
+        )
+        storedPhotos.push(cdnUrl)
+        continue
+      }
+
       if (shouldStoreBase64) {
-        if (photo.length > 2 * 1024 * 1024) {
-          return res.status(400).json({ error: "Each harvest photo must be under 2MB when base64 storage is enabled." })
+        if (photo.length > 3 * 1024 * 1024) {
+          return res.status(400).json({ error: "Each harvest photo must be under 3MB." })
         }
         await pool.query(
           "INSERT INTO yield_photos (yield_id, image_data) VALUES ($1, $2)",

@@ -65,12 +65,11 @@ router.get("/", auth, async (req, res) => {
           (
             SELECT json_agg(photo_url)
             FROM (
-              SELECT COALESCE(thumbnail_url, image_url) AS photo_url
+              SELECT COALESCE(thumbnail_url, image_url, image_data) AS photo_url
               FROM yield_photos
               WHERE yield_id = o.yield_id
-                AND COALESCE(thumbnail_url, image_url) IS NOT NULL
+                AND COALESCE(thumbnail_url, image_url, image_data) IS NOT NULL
               ORDER BY created_at ASC
-              LIMIT 1
             ) photos
           ),
           '[]'::json

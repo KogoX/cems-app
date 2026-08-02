@@ -30,11 +30,6 @@ function parsePgUrl(urlStr) {
   const [hostPort, database] = hostPath.split("/")
   const [host, portStr] = hostPort.split(":")
   let port = portStr ? parseInt(portStr, 10) : 5432
-
-  // Force port 6543 for Supabase pooler domain to use PgBouncer transaction mode (supports 10,000+ connections)
-  if (host.includes("pooler.supabase.com") && port === 5432) {
-    port = 6543
-  }
   
   return { user, password, host, port, database: database || "postgres" }
 }
