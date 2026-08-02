@@ -94,6 +94,91 @@ router.post("/", auth, async (req, res) => {
   }
 })
 
+router.get("/unpaid-stock", auth, async (req, res) => {
+  if (req.user.role !== "manager" && req.user.role !== "farmer") {
+    return res.status(403).json({ error: "Unauthorized" })
+  }
+
+  const { getMarketRate } = require("../lib/marketRates")
+
+  try {
+    const whereConditions = []
+    const values = []
+
+    if (req.user.role === "farmer") {
+      values.push(req.user.id)
+      whereConditions.push(`COALESCE(o.farmer_id, y.farmer_id) = $${values.length}`)
+    }
+
+    const farmerWhere = whereConditions.length > 0 ? `AND ${whereConditions.join(" AND ")}` : ""
+
+    const query = `
+      SELECT
+        o.id AS order_id,
+        o.yield_id,
+        COALESCE(o.farmer_id, y.farmer_id) AS farmer_id,
+        f.name AS farmer_name,
+        f.phone AS farmer_phone,
+        o.produce,
+        COALESCE(y.grade, 'A') AS grade,
+        o.quantity,
+        o.unit_price AS buyer_unit_price,
+        o.total_amount AS buyer_total_amount,
+        o.status AS order_status,
+        o.created_at AS order_date
+      FROM orders o
+      LEFT JOIN yields y ON o.yield_id = y.id
+      JOIN users f ON f.id = COALESCE(o.farmer_id, y.farmer_id)
+      LEFT JOIN (
+        SELECT order_id, status FROM payments WHERE status = 'Verified'
+      ) p ON p.order_id = o.id
+      WHERE (o.status IN ('Paid', 'Scheduled', 'Fulfilled') OR p.status = 'Verified')
+        ${farmerWhere}
+        AND o.id NOT IN (
+          SELECT order_id FROM payouts WHERE order_id IS NOT NULL AND status IN ('Paid', 'Processing', 'Pending')
+        )
+      ORDER BY o.created_at DESC
+    `
+
+    const result = await pool.query(query, values)
+
+    const items = result.rows.map((row) => {
+      const rateInfo = getMarketRate(row.grade)
+      const qty = Number(row.quantity || 0)
+      const buyerPrice = Number(row.buyer_unit_price || rateInfo.buyerPrice)
+      const buyerTotal = Number(row.buyer_total_amount || (qty * buyerPrice))
+      const farmerRate = rateInfo.farmerPayoutRate
+      const farmerPayoutAmount = qty * farmerRate
+      const coopRate = rateInfo.coldChainMargin
+      const coopRetainedAmount = qty * coopRate
+
+      return {
+        order_id: row.order_id,
+        stock_unique_id: `STOCK-${String(row.order_id).padStart(4, "0")}`,
+        yield_id: row.yield_id,
+        farmer_id: row.farmer_id,
+        farmer_name: row.farmer_name,
+        farmer_phone: row.farmer_phone,
+        produce: row.produce,
+        grade: row.grade,
+        quantity: qty,
+        buyer_unit_price: buyerPrice,
+        buyer_total_amount: buyerTotal,
+        farmer_payout_rate: farmerRate,
+        farmer_payout_amount: farmerPayoutAmount,
+        coop_margin_rate: coopRate,
+        coop_retained_amount: coopRetainedAmount,
+        order_status: row.order_status,
+        order_date: row.order_date,
+      }
+    })
+
+    res.json(items)
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
 router.get("/", auth, async (req, res) => {
   try {
     const whereConditions = []
