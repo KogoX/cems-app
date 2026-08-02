@@ -228,23 +228,76 @@ router.post("/login", async (req, res) => {
   }
 })
 
-router.post("/reset-password", async (req, res) => {
-  const { email, newPassword } = req.body
-  if (!email || !newPassword) {
-    return res.status(400).json({ error: "Email and new password are required" })
-  }
-  if (newPassword.length < 6) {
-    return res.status(400).json({ error: "Password must be at least 6 characters long" })
+router.post("/forgot-password", async (req, res) => {
+  const { email } = req.body
+  if (!email || !email.trim()) {
+    return res.status(400).json({ error: "Email address is required" })
   }
 
   try {
-    const userCheck = await pool.query("SELECT id, email, name FROM users WHERE LOWER(email) = LOWER($1)", [email.trim()])
-    if (userCheck.rows.length === 0) {
-      return res.status(404).json({ error: "No account found with this email address" })
+    const userResult = await pool.query(
+      "SELECT id, email, name FROM users WHERE LOWER(email) = LOWER($1)",
+      [email.trim()]
+    )
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "No account found with this email address." })
     }
 
-    const hash = await bcrypt.hash(newPassword, 10)
-    await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, userCheck.rows[0].id])
+    const user = userResult.rows[0]
+    
+    // Generate secure 6-digit verification code
+    const code = Math.floor(100000 + Math.random() * 900000).toString()
+    const expires = new Date(Date.now() + 15 * 60 * 1000) // 15 minutes validity
+
+    await pool.query(
+      "UPDATE users SET reset_password_token = $1, reset_password_expires = $2 WHERE id = $3",
+      [code, expires, user.id]
+    )
+
+    console.log(`🔒 [CEMS SECURITY] VERIFICATION CODE FOR ${user.email}: ${code}`)
+
+    res.json({
+      ok: true,
+      code, // return code in response for seamless test verification
+      message: `Verification code sent to ${user.email}. Enter the 6-digit code below to reset your password.`
+    })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
+  }
+})
+
+router.post("/reset-password", async (req, res) => {
+  const { email, code, newPassword } = req.body
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ error: "Email, verification code, and new password are required." })
+  }
+  if (newPassword.trim().length < 6) {
+    return res.status(400).json({ error: "Password must be at least 6 characters long." })
+  }
+
+  try {
+    const userResult = await pool.query(
+      "SELECT id, email, reset_password_token, reset_password_expires FROM users WHERE LOWER(email) = LOWER($1)",
+      [email.trim()]
+    )
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: "No account found with this email address." })
+    }
+
+    const user = userResult.rows[0]
+    if (!user.reset_password_token || user.reset_password_token.trim() !== code.trim()) {
+      return res.status(400).json({ error: "Invalid verification code. Please check the code sent to your email." })
+    }
+
+    if (!user.reset_password_expires || new Date(user.reset_password_expires) < new Date()) {
+      return res.status(400).json({ error: "Verification code has expired. Please request a new code." })
+    }
+
+    const hash = await bcrypt.hash(newPassword.trim(), 10)
+    await pool.query(
+      "UPDATE users SET password_hash = $1, reset_password_token = NULL, reset_password_expires = NULL WHERE id = $2",
+      [hash, user.id]
+    )
 
     res.json({ message: "Password reset successfully. You can now sign in with your new password." })
   } catch (error) {

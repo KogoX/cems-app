@@ -41,6 +41,8 @@ async function bootstrapDatabase(pool) {
     ALTER TABLE users ADD COLUMN IF NOT EXISTS payment_details TEXT;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL;
     ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_password_token TEXT;
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_password_expires TIMESTAMPTZ;
 
     DO $$
     BEGIN
