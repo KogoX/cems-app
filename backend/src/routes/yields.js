@@ -164,49 +164,44 @@ router.post("/", auth, async (req, res) => {
     const incomingPhotos = Array.isArray(photos) ? photos.slice(0, 10).filter(Boolean) : []
     const { uploadToSupabaseStorage } = require("../lib/storage")
     const shouldStoreBase64 = process.env.STORE_HARVEST_BASE64 !== "false"
-    const storedPhotos = []
-
-    for (let index = 0; index < incomingPhotos.length; index++) {
-      const photo = incomingPhotos[index]
-      if (isRemotePhoto(photo)) {
-        await pool.query(
-          "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
-          [yieldRecord.id, photo, photo]
-        )
-        storedPhotos.push(photo)
-        continue
-      }
-
-      // Try uploading to Supabase Object Storage bucket first (saves egress & DB storage)
-      const cdnUrl = await uploadToSupabaseStorage(photo)
-      if (cdnUrl) {
-        await pool.query(
-          "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
-          [yieldRecord.id, cdnUrl, cdnUrl]
-        )
-        storedPhotos.push(cdnUrl)
-        continue
-      }
-
-      if (shouldStoreBase64) {
-        if (photo.length > 3 * 1024 * 1024) {
-          return res.status(400).json({ error: "Each harvest photo must be under 3MB." })
+    const storedPhotos = await Promise.all(
+      incomingPhotos.map(async (photo, index) => {
+        if (isRemotePhoto(photo)) {
+          await pool.query(
+            "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
+            [yieldRecord.id, photo, photo]
+          )
+          return photo
         }
-        await pool.query(
-          "INSERT INTO yield_photos (yield_id, image_data) VALUES ($1, $2)",
-          [yieldRecord.id, photo]
-        )
-        storedPhotos.push(photo)
-        continue
-      }
 
-      const placeholder = demoPhoto(index)
-      await pool.query(
-        "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
-        [yieldRecord.id, placeholder.full, placeholder.thumb]
-      )
-      storedPhotos.push(placeholder.thumb)
-    }
+        // Try uploading to Supabase Object Storage bucket first (saves egress & DB storage)
+        const cdnUrl = await uploadToSupabaseStorage(photo)
+        if (cdnUrl) {
+          await pool.query(
+            "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
+            [yieldRecord.id, cdnUrl, cdnUrl]
+          )
+          return cdnUrl
+        }
+
+        if (shouldStoreBase64) {
+          if (photo.length <= 3 * 1024 * 1024) {
+            await pool.query(
+              "INSERT INTO yield_photos (yield_id, image_data) VALUES ($1, $2)",
+              [yieldRecord.id, photo]
+            )
+            return photo
+          }
+        }
+
+        const placeholder = demoPhoto(index)
+        await pool.query(
+          "INSERT INTO yield_photos (yield_id, image_url, thumbnail_url) VALUES ($1, $2, $3)",
+          [yieldRecord.id, placeholder.full, placeholder.thumb]
+        )
+        return placeholder.thumb
+      })
+    )
 
     // Notify all managers
     await pool.query(`
